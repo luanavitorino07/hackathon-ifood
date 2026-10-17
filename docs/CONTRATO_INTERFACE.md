@@ -223,6 +223,30 @@ Somente descontos autorizados e aplicáveis entram em `discount_cents`. Um desco
 | `total_cents` | `integer >= 0` | sim |
 | `data_origin` | `"ifood_mcp" \| "demo"` | não |
 
+### 3.7 `InitialContext`
+
+Contexto mínimo que a interface pode fornecer ao criar uma sessão:
+
+```json
+{
+  "name": "Ana",
+  "age": null,
+  "location": "São Paulo, SP",
+  "preferences": ["comida japonesa"],
+  "restrictions": ["vegetariana"]
+}
+```
+
+| Campo | Tipo | Nulo | Regra |
+|---|---|---:|---|
+| `name` | `string` | sim | Não vazia quando informada |
+| `age` | `integer` | sim | Quando informada, entre `0` e `130` |
+| `location` | `string` | sim | Não vazia quando informada |
+| `preferences` | `string[]` | não | Pode ser `[]`; itens não vazios |
+| `restrictions` | `string[]` | não | Pode ser `[]`; itens não vazios |
+
+Quando `initial_context` for um objeto, essas cinco chaves são obrigatórias. Os dados têm origem na interface e **não são considerados dados provenientes ou verificados pelo iFood**. Para o MVP, eles entram na memória operacional da sessão e ficam disponíveis ao orquestrador antes da primeira mensagem; não são gravados automaticamente na memória persistente.
+
 ## 4. Endpoints HTTP
 
 ### 4.1 Criar sessão
@@ -232,17 +256,27 @@ POST /api/v1/sessions
 Content-Type: application/json
 ```
 
-Request — todas as chaves são obrigatórias:
+Request com contexto inicial:
 
 ```json
 {
-  "client_id": "client_demo_1"
+  "client_id": "client_demo_1",
+  "initial_context": {
+    "name": "Ana",
+    "age": null,
+    "location": "São Paulo, SP",
+    "preferences": ["comida japonesa"],
+    "restrictions": ["vegetariana"]
+  }
 }
 ```
 
-| Campo | Tipo | Nulo |
-|---|---|---:|
-| `client_id` | `string` | sim |
+| Campo | Tipo | Obrigatório | Nulo |
+|---|---|---:|---:|
+| `client_id` | `string` | sim | sim |
+| `initial_context` | `InitialContext` | não | sim |
+
+`initial_context` é a única chave opcional deste request. Pode ser omitida ou enviada como `null`, preservando a criação de sessão já existente:
 
 Para atendimento anônimo:
 
@@ -252,7 +286,9 @@ Para atendimento anônimo:
 }
 ```
 
-O tenant não é recebido no body. Ele é resolvido pelo backend.
+O backend deve validar que `client_id` pertence ao comprador autenticado ou à conta de demonstração. O identificador enviado não constitui prova de identidade ou autorização. O tenant não é recebido no body; ele é resolvido pelo backend.
+
+Dados de `initial_context` são fornecidos pela interface e não são considerados dados verificados pelo iFood. Informações da conta iFood são recuperadas separadamente pelo backend somente quando a integração e as permissões tiverem sido confirmadas.
 
 Response `201`:
 
@@ -1113,7 +1149,14 @@ Request:
 
 ```json
 {
-  "client_id": "client_demo_1"
+  "client_id": "client_demo_1",
+  "initial_context": {
+    "name": "Ana",
+    "age": null,
+    "location": "São Paulo, SP",
+    "preferences": ["comida japonesa"],
+    "restrictions": ["vegetariana"]
+  }
 }
 ```
 

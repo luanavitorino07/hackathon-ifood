@@ -323,17 +323,40 @@ Tipos: `recommendation_id`, `merchant_id`, `merchant_name`: `string`; `items`: `
 
 Tipos: `cart_id`: `string|null`; `status`: `"empty" | "draft" | "ready" | "submitted" | "error"`; `items`: `CartItem[]`; `currency`: literal `"BRL"`; `total_cents`: `integer>=0|null`; `data_origin`: `"ifood_mcp" | "demo"`.
 
+**`InitialContext`** — contexto mínimo que a interface pode fornecer ao criar a sessão:
+
+```json
+{
+  "name": "Ana",
+  "age": null,
+  "location": "São Paulo, SP",
+  "preferences": ["comida japonesa"],
+  "restrictions": ["vegetariana"]
+}
+```
+
+Tipos: `name: string|null`; `age: integer|null` entre `0` e `130`; `location: string|null`; `preferences: string[]`; `restrictions: string[]`. Quando informadas, as strings devem ser não vazias. `preferences` e `restrictions` podem ser `[]`. Todas as cinco chaves são obrigatórias quando `initial_context` for um objeto. Esses dados têm origem na interface e **não são considerados dados verificados pelo iFood**. Para o MVP, entram na memória operacional da sessão e ficam disponíveis ao orquestrador antes da primeira mensagem; não são gravados automaticamente na memória persistente.
+
 ### 15.3 HTTP — contratos completos de entrada e saída
 
 **`POST /api/v1/sessions`** — cria um atendimento **antes** de iniciar tarefas ou assinar eventos.
 
-Request JSON (todas as chaves):
+Request JSON com o contexto inicial opcional:
 
 ```json
-{"client_id":"client_demo_1"}
+{
+  "client_id": "client_demo_1",
+  "initial_context": {
+    "name": "Ana",
+    "age": null,
+    "location": "São Paulo, SP",
+    "preferences": ["comida japonesa"],
+    "restrictions": ["vegetariana"]
+  }
+}
 ```
 
-`client_id: string|null` (para atendimento anônimo); o backend valida se o identificador pertence ao comprador autenticado ou à conta de demonstração. Empresa/tenant é resolvida **pelo backend**, não pelo body.
+`client_id: string|null` (para atendimento anônimo) continua obrigatório. `initial_context: InitialContext|null` é a única chave opcional deste request: pode ser omitida ou enviada como `null` para preservar o comportamento anterior. O backend valida obrigatoriamente se `client_id` pertence ao comprador autenticado ou à conta de demonstração; o valor enviado não é prova de identidade ou autorização. Empresa/tenant é resolvida **pelo backend**, não pelo body. Informações da conta iFood só podem ser recuperadas diretamente pelo backend quando a integração e as permissões estiverem confirmadas; dados de `initial_context` não devem ser rotulados como provenientes ou verificados pelo iFood.
 
 Response `201`:
 
