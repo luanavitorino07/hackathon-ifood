@@ -4,8 +4,8 @@ from __future__ import annotations
 from typing import Any
 
 from .events import ORCHESTRATOR_ID, EventEmitter, new_id
-from .intent import extract_constraints
-from .models import AgentResult, AgentsOutput, SessionContext, WorkingState
+from .intent import constraints_from_initial_context, extract_constraints, overlay
+from .models import AgentResult, AgentsOutput, Constraints, SessionContext, WorkingState, tag_requirements
 from .ports import AgentRuntimePort, EventSink, MemoryPort, RevisionConflict
 from .registry import Agent, AgentContext, AgentRegistry
 
@@ -28,7 +28,7 @@ class Orchestrator:
     # ------------------------------------------------------------------
     def handle_message(self, session: SessionContext) -> AgentsOutput:
         events = EventEmitter(self._sink, session.session_id)
-        constraints = extract_constraints(session.message_text, session.constraints)
+        constraints = self._build_constraints(session)
         state = WorkingState(constraints=constraints)
         self._persist(session.session_id, ORCHESTRATOR_ID, {"constraints": constraints.to_dict()})
         events.agent_status(ORCHESTRATOR_ID, "running", None, "Planejando atendimento")
@@ -53,6 +53,13 @@ class Orchestrator:
         state.missing_data = missing
         return self._finish(state, events, limitations)
 
+    def _build_constraints(self, session: SessionContext) -> Constraints:
+        """memória < session.constraints < initial_context < mensagem atual (explícita)."""
+        stored = Constraints.from_dict(self._memory.load(session.session_id).state.get("constraints"))
+        merged = overlay(stored, session.constraints)
+        merged = constraints_from_initial_context(session.initial_context, merged)
+        return extract_constraints(session.message_text, merged)
+
     def _fail(self, events: EventEmitter, result: AgentResult) -> AgentsOutput:
         code, retryable = _ERROR_CODES.get(str(result.output.get("error")), ("AGENT_ERROR", False))
         events.error(code, result.justification, retryable)
@@ -72,9 +79,17 @@ class Orchestrator:
                                      f"Proposta {rid} descartada por reprovação na auditoria")
                 events.conflict(cid, ["planner", "auditor"], f"Proposta {rid} descartada", "resolved")
         if not approved:
-            reason = ("Não encontrei ofertas disponíveis." if not state.offers
-                      else "Nenhuma opção atende orçamento e restrições ao mesmo tempo.")
-            text = f"{reason} Pode ajustar o orçamento ou as restrições?"
+            unverifiable = tag_requirements(state.constraints)
+            if not state.offers:
+                reason, ask = "Não encontrei ofertas disponíveis.", "Pode ajustar o pedido?"
+            elif unverifiable:
+                names = ", ".join(unverifiable)
+                reason = f"Não consegui confirmar nas ofertas a restrição: {names}."
+                ask = "Pode me dizer como prefere seguir, ou ajustar a restrição?"
+            else:
+                reason, ask = ("Nenhuma opção atende orçamento e restrições ao mesmo tempo.",
+                               "Pode ajustar o orçamento ou as restrições?")
+            text = f"{reason} {ask}"
             events.decision(None, reason, [], limitations or state.missing_data)
             events.agent_status(ORCHESTRATOR_ID, "waiting", None, "Aguardando cliente")
             events.assistant_message(text)

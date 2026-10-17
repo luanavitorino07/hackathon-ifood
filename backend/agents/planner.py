@@ -6,7 +6,7 @@ from typing import Any
 
 from .events import new_id
 from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, Constraints, Offer,
-                     SessionContext, WorkingState)
+                     SessionContext, WorkingState, slug, tag_requirements)
 from .registry import AgentContext, AgentDefinition
 
 MAX_RECOMMENDATIONS = 3
@@ -16,9 +16,16 @@ def is_vegetarian(offer: Offer) -> bool:
     return "vegetarian" in offer.tags
 
 
+def has_tags(offer: Offer, required: tuple[str, ...]) -> bool:
+    have = {slug(t) for t in offer.tags}
+    return all(r in have for r in required)
+
+
 def _pick(pool: list[Offer], units: int, c: Constraints, premium: bool) -> list[tuple[Offer, int]] | None:
     """Escolhe `units` itens de um restaurante. None se as restrições não puderem ser atendidas."""
-    eligible = [o for o in pool if not (VEGETARIAN_ALL in c.dietary and not is_vegetarian(o))]
+    required = tag_requirements(c)  # restrição sem tag na oferta não é verificável => não elegível
+    eligible = [o for o in pool if has_tags(o, required)
+                and not (VEGETARIAN_ALL in c.dietary and not is_vegetarian(o))]
     if not eligible:
         return None
     ordered = sorted(eligible, key=lambda o: (o.unit_price_cents, o.product_id), reverse=premium)
@@ -98,11 +105,12 @@ class Planner:
         if skipped_budget:
             limitations.append(f"{skipped_budget} combinação(ões) acima do orçamento descartada(s)")
         if skipped_restriction:
-            limitations.append(f"{skipped_restriction} restaurante(s) sem opção para as restrições")
+            limitations.append(f"{skipped_restriction} restaurante(s) sem opção verificável para as restrições")
         if not st.recommendations:
             return AgentResult("planner", "needs_info", {"recommendations": 0},
-                               "Nenhuma combinação atende orçamento e restrições.", "low",
-                               limitations, ["orçamento ou restrições compatíveis com as ofertas"])
+                               "Nenhuma combinação atende e comprova orçamento e restrições.", "low",
+                               limitations, ["orçamento ou restrições compatíveis com as ofertas"]
+                               + [f"verificação da restrição '{r}'" for r in tag_requirements(c)])
         return AgentResult("planner", "done", {"recommendations": len(st.recommendations)},
                            f"{len(st.recommendations)} proposta(s) montada(s) por regra determinística.",
                            "medium", limitations)

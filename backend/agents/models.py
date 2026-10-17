@@ -4,6 +4,8 @@ Dinheiro sempre em centavos inteiros de BRL; desconhecido é `None`.
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -11,9 +13,22 @@ Mode = Literal["real", "demo"]
 DataOrigin = Literal["ifood_mcp", "demo"]
 Confidence = Literal["low", "medium", "high"]
 
-# Restrições alimentares normalizadas.
+# Restrições normalizadas. Qualquer outra entrada de `dietary` é um slug que cada item
+# do pedido precisa carregar como tag da oferta; sem essa tag a restrição NÃO é verificável.
 VEGETARIAN_OPTION = "vegetarian_option"  # ao menos um item vegetariano no pedido
 VEGETARIAN_ALL = "vegetarian"  # todos os itens vegetarianos
+SPECIAL_RESTRICTIONS = frozenset({VEGETARIAN_OPTION, VEGETARIAN_ALL})
+
+
+def slug(text: str) -> str:
+    """Normaliza texto livre para comparação (sem acento, minúsculo, hífens)."""
+    plain = unicodedata.normalize("NFKD", text.lower()).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "-", plain).strip("-")
+
+
+def tag_requirements(constraints: "Constraints") -> tuple[str, ...]:
+    """Restrições que dependem de tag explícita na oferta para serem verificadas."""
+    return tuple(d for d in constraints.dietary if d not in SPECIAL_RESTRICTIONS)
 
 
 @dataclass(frozen=True)
@@ -22,6 +37,21 @@ class Constraints:
     party_size: int | None = None
     dietary: tuple[str, ...] = ()
     preferences: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "Constraints":
+        """Tolerante a estado ausente ou malformado vindo da memória."""
+        if not isinstance(data, dict):
+            return cls()
+
+        def ints(v: Any) -> int | None:
+            return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+
+        def texts(v: Any) -> tuple[str, ...]:
+            return tuple(x for x in v if isinstance(x, str) and x) if isinstance(v, list) else ()
+
+        return cls(ints(data.get("budget_cents")), ints(data.get("party_size")),
+                   texts(data.get("dietary")), texts(data.get("preferences")))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -43,7 +73,7 @@ class SessionContext:
     message_text: str
     input_mode: Literal["text", "audio"] = "text"
     constraints: Constraints = Constraints()
-    initial_context: dict[str, Any] = field(default_factory=dict)  # opaco; ver bootstrap
+    initial_context: dict[str, Any] | None = None  # contrato v1: pode ser nulo
 
 
 @dataclass(frozen=True)

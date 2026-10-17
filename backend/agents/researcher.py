@@ -41,7 +41,7 @@ SYSTEM = (
 
 def _tool_context(session: SessionContext) -> dict[str, Any]:
     """Contexto estruturado mínimo para as ferramentas. Hoje: apenas `location`, se informada."""
-    location = session.initial_context.get("location")
+    location = (session.initial_context or {}).get("location")
     return {"location": location} if location else {}
 
 

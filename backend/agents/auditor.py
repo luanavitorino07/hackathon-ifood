@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models import VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, SessionContext, WorkingState
+from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, SessionContext, WorkingState,
+                     slug, tag_requirements)
 from .registry import AgentContext, AgentDefinition
 
 
@@ -43,6 +44,12 @@ def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
         issues.append("Contém item não vegetariano")
     if VEGETARIAN_OPTION in c.dietary and not any("vegetarian" in t for t in veg):
         issues.append("Sem opção vegetariana")
+    for req in tag_requirements(c):  # restrição sem comprovação nos dados nunca é aprovada
+        for it in items:
+            offer = by_id.get(it["product_id"])
+            if offer is None or req not in {slug(t) for t in offer.tags}:
+                issues.append(f"Restrição '{req}' não verificada em {it['product_id']}")
+                break
     if c.party_size and sum(i["quantity"] for i in items) < c.party_size:
         issues.append("Quantidade insuficiente para o número de pessoas")
     return issues
