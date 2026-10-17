@@ -35,7 +35,8 @@ class FakeRuntime:
     def run(self, call: RuntimeCall) -> RuntimeOutcome:
         self.calls.append(call)
         if self.error:
-            return RuntimeOutcome(ok=False, error=self.error, retry_after_s=30)  # type: ignore[arg-type]
+            return RuntimeOutcome(ok=False, error=self.error, retry_after_s=30,  # type: ignore[arg-type]
+                                  detail="falha simulada")
         trace = ToolTrace("call_demo_1", "offer_search", self.provider,  # type: ignore[arg-type]
                           "succeeded", 12, f"{len(self.offers)} oferta(s) simulada(s)")
         return RuntimeOutcome(ok=True, structured={"offers": copy.deepcopy(self.offers)}, tool_calls=(trace,))

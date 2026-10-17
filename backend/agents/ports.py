@@ -23,6 +23,8 @@ class RuntimeCall:
     output_schema: dict[str, Any]  # JSON Schema da resposta
     allowed_tools: tuple[str, ...] = ()  # nomes lógicos; ex.: "offer_search"
     max_tool_calls: int = 3
+    timeout_s: float = 60.0  # teto da chamada inteira; estouro => error="timeout"
+    context: dict[str, Any] = field(default_factory=dict)  # só o mínimo estruturado p/ ferramentas (ex.: localização); sem PII desnecessária
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,7 @@ class RuntimeOutcome:
     tool_calls: tuple[ToolTrace, ...] = ()
     error: RuntimeError_ | None = None
     retry_after_s: int | None = None
+    detail: str | None = None  # motivo curto e sanitizado, só para diagnóstico controlado
 
 
 @runtime_checkable

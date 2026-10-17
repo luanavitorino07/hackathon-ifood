@@ -76,6 +76,28 @@ class FlowTest(unittest.TestCase):
         orch.handle_message(ctx)
         self.assertEqual(memory.load("sess_1").state["constraints"]["budget_cents"], 3000)
 
+    def test_runtime_call_carries_timeout_and_minimal_context(self):
+        runtime = FakeRuntime()
+        sink, memory = RecordingSink(), InMemoryMemory()
+        ctx = SessionContext("sess_1", "tenant_demo", "client_x", "demo", "Quero um lanche",
+                             initial_context={"location": {"lat": -23.5, "lng": -46.6}, "email": "a@b.c"})
+        build_orchestrator(runtime, memory, sink).handle_message(ctx)
+        call = runtime.calls[0]
+        self.assertEqual(call.timeout_s, 60.0)
+        self.assertEqual(call.context, {"location": {"lat": -23.5, "lng": -46.6}})
+        self.assertNotIn("client_x", call.prompt)
+        self.assertEqual(call.allowed_tools, ("offer_search",))
+
+    def test_contexts_do_not_share_mutable_default(self):
+        from backend.agents.ports import RuntimeCall
+        a, b = RuntimeCall("a", "t", "s", "", "", {}), RuntimeCall("a", "t", "s", "", "", {})
+        self.assertIsNot(a.context, b.context)
+
+    def test_runtime_detail_stays_out_of_events(self):
+        orch, ctx, sink, _ = make("Quero um lanche", FakeRuntime(error="timeout"))
+        orch.handle_message(ctx)
+        self.assertNotIn("falha simulada", str(sink.events))
+
     def test_catalog_lists_registered_agents(self):
         orch, *_ = make("x")
         self.assertEqual([a["agent_id"] for a in orch.catalog()], ["researcher", "planner", "auditor"])

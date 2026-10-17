@@ -39,6 +39,12 @@ SYSTEM = (
 )
 
 
+def _tool_context(session: SessionContext) -> dict[str, Any]:
+    """Contexto estruturado mínimo para as ferramentas. Hoje: apenas `location`, se informada."""
+    location = session.initial_context.get("location")
+    return {"location": location} if location else {}
+
+
 def _int_or_none(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
@@ -92,14 +98,15 @@ class Researcher:
         outcome = ctx.runtime.run(RuntimeCall(
             agent_id="researcher", task_id=ctx.task_id, session_id=ctx.session.session_id,
             system=SYSTEM, prompt=prompt, output_schema=OFFER_SCHEMA,
-            allowed_tools=("offer_search",), max_tool_calls=3))
+            allowed_tools=("offer_search",), max_tool_calls=3,
+            context=_tool_context(ctx.session)))
         for t in outcome.tool_calls:
             ctx.events.tool_activity("researcher", t.call_id, t.tool_name, t.provider,
                                      "started", None, f"Iniciando {t.tool_name}")
             ctx.events.tool_activity("researcher", t.call_id, t.tool_name, t.provider,
                                      t.status, t.duration_ms, t.summary)
         if not outcome.ok:
-            return AgentResult("researcher", "error", {"error": outcome.error},
+            return AgentResult("researcher", "error", {"error": outcome.error, "detail": outcome.detail},
                                f"Falha do runtime: {outcome.error}",
                                limitations=[f"runtime:{outcome.error}"])
         origin = origin_of(outcome)
