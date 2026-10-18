@@ -133,7 +133,7 @@ Os agentes não importam HTTP, OpenCode, MCP nem banco.
 | `GET /admin/ai-usage` | Somente gestor (adição ao contrato v1): custo de IA por cliente, vendas aceitas, % da venda gasta com IA e lucro estimado |
 | `POST /orders/submit` | Botão "Comprar": **compra simulada**. Registra o pedido no atendimento, emite `order_status_changed` e avisa no chat que nada foi enviado ao iFood nem pago. Idempotente por `client_action_id`; opção de loja fechada continua bloqueada (409) |
 
-### Regras do contrato v1 (resumo do `PROMPT.md` §15)
+### Regras do contrato v1
 - JSON em `snake_case`, datas em UTC ISO 8601, `schema_version: 1`.
 - Dinheiro em **centavos inteiros**; valor desconhecido é `null`.
 - As chaves de cada objeto são fechadas e os nulos ficam explícitos.
