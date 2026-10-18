@@ -131,7 +131,7 @@ export function CeoScreen() {
     <ScrollView style={s.page} contentContainerStyle={[s.content, { padding: wide ? 32 : 18, gap: 22 }]}>
       <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
         <View style={{ flex: 1, minWidth: 240, gap: 4 }}>
-          <Text style={s.title}>Visão do CEO</Text>
+          <Text style={s.title}>Análise financeira</Text>
           <Text style={s.muted}>
             Resultados da PedIA nas últimas 24 h · calculados a partir dos eventos reais dos atendimentos
           </Text>

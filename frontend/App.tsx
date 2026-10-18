@@ -18,7 +18,7 @@ import { CeoScreen } from "./src/screens/CeoScreen";
 import { BrandGradient, Icon, Wordmark } from "./src/components/Brand";
 import { styles as s } from "./src/theme";
 export default function App() {
-  const [tab, setTab] = useState<OfficeTab | "Chatbot" | "Visão do CEO">("Chatbot");
+  const [tab, setTab] = useState<OfficeTab | "Chatbot" | "Análise financeira">("Chatbot");
   const wide = useWindowDimensions().width >= 850;
   const [loaded, fontError] = useFonts({
     Inter: Inter_400Regular,
@@ -58,7 +58,7 @@ export default function App() {
           >
             {(
               [
-                ["Visão do CEO", "ceo"],
+                ["Análise financeira", "money"],
                 ["Dashboard", "chart"],
                 ["Painel de Agentes", "agent"],
                 ["Conflitos", "warning"],
@@ -96,10 +96,10 @@ export default function App() {
       )}
       <View style={{ flex: 1 }}>
         <View style={{ flex: 1, display: tab === "Chatbot" ? "flex" : "none" }}>
-          <ChatScreen onBack={() => setTab("Visão do CEO")} />
+          <ChatScreen onBack={() => setTab("Análise financeira")} />
         </View>
-        {tab === "Visão do CEO" && <CeoScreen />}
-        {tab !== "Chatbot" && tab !== "Visão do CEO" && <OfficeScreen tab={tab} />}
+        {tab === "Análise financeira" && <CeoScreen />}
+        {tab !== "Chatbot" && tab !== "Análise financeira" && <OfficeScreen tab={tab} />}
       </View>
     </SafeAreaView>
   );

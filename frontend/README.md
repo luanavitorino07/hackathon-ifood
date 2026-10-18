@@ -1,8 +1,8 @@
 # PedIA — React Native + TypeScript
 
-A seta no cabeçalho do chat abre o escritório (primeiro a **Visão do CEO**); “Abrir chatbot” retorna à conversa.
+A seta no cabeçalho do chat abre o escritório (primeiro a **Análise financeira**); “Abrir chatbot” retorna à conversa.
 
-**Visão do CEO** (`src/screens/CeoScreen.tsx` + `src/services/executive.ts`): indicadores executivos
+**Análise financeira** (`src/screens/CeoScreen.tsx` + `src/services/executive.ts`): indicadores executivos
 calculados a partir do histórico real dos atendimentos recentes (gestor): atendimentos, taxa de
 recomendação, ticket médio, valor recomendado, tempo médio de resposta, funil, uso e falhas da IA
 (com alerta de cota), buscas no iFood e buscas economizadas pela retomada, descontos sugeridos,
