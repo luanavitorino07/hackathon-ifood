@@ -5,7 +5,18 @@
 
 ## Entrega Codex — qualidade da busca e catálogo — 18/10/2026
 
-Lorenzo autorizou agora corrigir abertura, fazer commit, pull e push na `feat/integrations`, sem merge desta entrega na `main`. A implementação local inicial foi feita sobre `8a89ee2`; o pull integra `main@c78e6f9`, com a retomada do Claude. Este relatório só estará na `main` após integração por PR.
+Lorenzo autorizou integrar esta entrega e este relatório na `main` via PR. A
+implementação inicial foi feita sobre `8a89ee2`; o pull integrou `main@c78e6f9`,
+com a retomada do Claude. Código validado em `1366793`: **217 testes aprovados,
+1 teste real opt-in pulado, nenhuma falha nem xfail**. A publicação deve ser
+confirmada pelo estado do PR; não confundir push na feature com merge na `main`.
+
+**Claude/Gabriel:** depois do merge, atualizar a partir da `main` e reiniciar a API.
+Testar especificidade do prato, só lojas abertas, diversidade e preço unitário;
+quantidade e orçamento devem reaproveitar a pesquisa. Ingredientes/adicionais
+continuam não confirmados: não apresentar personalização como implementada.
+Todos os relatórios futuros também devem chegar a este arquivo na `main`,
+preservando os recados anteriores e mantendo código em PR revisado.
 
 ### Diagnóstico inicial na base anterior (histórico; ver atualização abaixo)
 
