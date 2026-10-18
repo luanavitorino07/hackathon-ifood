@@ -48,8 +48,12 @@ def normalize_restriction(text: str) -> str:
         return VEGETARIAN_ALL
     if s.startswith("vegan"):
         return "vegan"
-    if "gluten" in s and any(w in s for w in ("sem", "free", "livre")):
+    if "gluten" in s and any(w in s for w in ("sem", "free", "livre", "intoler", "celia")):
         return "gluten-free"
+    if "lactose" in s or s.startswith("sem-leite"):
+        return "lactose-free"
+    if "acucar" in s or "diabet" in s:
+        return "sugar-free"
     return s
 
 
@@ -69,11 +73,17 @@ def extract_constraints(text: str, known: Constraints) -> Constraints:
     if m:
         budget = round(float((m.group(1) or m.group(2)).replace(",", ".")) * 100)
     m = re.search(r"(\d+|" + "|".join(_NUMBERS) + r")\s+(?:pessoas|pessoa)", t)
+    if not m:  # "feijoada pra 2", "pizza para dois" (sem a palavra pessoas; não confunde com valores)
+        m = re.search(r"\b(?:pra|para)\s+(\d{1,2}|" + "|".join(_NUMBERS) + r")\b(?!\s*(?:reais|real|conto|pila|r\$|[.,]\d))", t)
     if m:
         party = int(m.group(1)) if m.group(1).isdigit() else _NUMBERS[m.group(1)]
     if "vegetarian" in t:
         dietary -= set(_VEGETARIAN_WORDS)  # a última declaração do cliente define o tipo
         dietary.add(VEGETARIAN_OPTION if re.search(r"(uma|1|alguma)\s+opcao", t) else VEGETARIAN_ALL)
+    if re.search(r"\blactose\b|\bintoleran\w* a lactose|\bsem leite\b", t):
+        dietary.add("lactose-free")
+    if re.search(r"\bsem gluten\b|\bceliac", t):
+        dietary.add("gluten-free")
     return Constraints(budget, party, tuple(sorted(dietary)), known.preferences)
 
 

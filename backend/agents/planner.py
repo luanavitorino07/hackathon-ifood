@@ -6,8 +6,8 @@ from typing import Any
 
 from .events import new_id
 from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, Constraints, Offer,
-                     SessionContext, WorkingState, filtered_mark, slug, soft_unverified,
-                     tag_requirements)
+                     SessionContext, WorkingState, filtered_mark, option_requirements, restriction_label,
+                     slug, soft_unverified, tag_requirements)
 from .registry import AgentContext, AgentDefinition
 from .relevance import relevant
 
@@ -19,28 +19,47 @@ def is_vegetarian(offer: Offer, proven: bool = True) -> bool:
     return "vegetarian" in offer.tags or (not proven and filtered_mark("VEGETARIAN") in offer.tags)
 
 
-def has_tags(offer: Offer, required: tuple[str, ...]) -> bool:
-    have = {slug(t) for t in offer.tags}
+def has_tags(offer: Offer, required: tuple[str, ...], ai: dict[str, tuple[str, ...]] | None = None) -> bool:
+    """Cada restrição exigida vem comprovada pela tag do iFood ou foi avaliada pela IA do Curador."""
+    have = {slug(t) for t in offer.tags} | set((ai or {}).get(offer.product_id, ()))
     return all(r in have for r in required)
 
 
+def ai_only(offer: Offer, restriction: str, ai: dict[str, tuple[str, ...]]) -> bool:
+    """A restrição só foi atendida pela avaliação da IA (sem tag do iFood)."""
+    return restriction not in {slug(t) for t in offer.tags} and restriction in ai.get(offer.product_id, ())
+
+
 def _pick(pool: list[Offer], units: int, c: Constraints, premium: bool, required: tuple[str, ...],
-          veg_enforced: bool) -> list[tuple[Offer, int]] | None:
-    """Escolhe `units` itens de um restaurante. None se as restrições não puderem ser atendidas."""
-    eligible = [o for o in pool if has_tags(o, required)
-                and not (VEGETARIAN_ALL in c.dietary and not is_vegetarian(o, veg_enforced))]
+          veg_enforced: bool, serves: dict[str, int] | None = None,
+          ai: dict[str, tuple[str, ...]] | None = None) -> list[tuple[Offer, int]] | None:
+    """Escolhe itens de um restaurante até servir `units` pessoas (a IA informa quantas pessoas cada
+    item serve; sem isso, 1 por pessoa). None se as restrições não puderem ser atendidas."""
+    serves, ai = serves or {}, ai or {}
+    portions = lambda o: serves.get(o.product_id, 1)  # noqa: E731
+    veg = lambda o: is_vegetarian(o, veg_enforced) or "vegetarian" in ai.get(o.product_id, ())  # noqa: E731
+    eligible = [o for o in pool if has_tags(o, required, ai)
+                and not (VEGETARIAN_ALL in c.dietary and not veg(o))]
     if not eligible:
         return None
-    ordered = sorted(eligible, key=lambda o: (o.unit_price_cents, o.product_id), reverse=premium)
+    # econômica: menor preço por pessoa atendida
+    ordered = sorted(eligible, key=lambda o: (o.unit_price_cents / portions(o), o.product_id), reverse=premium)
     chosen: list[Offer] = []
     if VEGETARIAN_OPTION in c.dietary and VEGETARIAN_ALL not in c.dietary:
-        veg = [o for o in ordered if is_vegetarian(o, veg_enforced)]
-        if not veg:
+        options = [o for o in ordered if veg(o)]
+        if not options:
             return None
-        chosen.append(veg[0])
+        chosen.append(options[0])
+    for r in option_requirements(c):  # "um amigo é vegano": ao menos um item atende
+        if any(has_tags(o, (r,), ai) for o in chosen):
+            continue
+        options = [o for o in ordered if has_tags(o, (r,), ai)]
+        if not options:
+            return None
+        chosen.append(options[0])
     # econômica: completa com o item mais barato; a outra opção varia os itens (rodízio).
     fill = 0
-    while len(chosen) < max(units, 1):
+    while sum(portions(o) for o in chosen) < max(units, 1):
         chosen.append(ordered[fill % len(ordered)] if premium else ordered[0])
         fill += 1
     counts: dict[str, int] = defaultdict(int)
@@ -127,17 +146,25 @@ class Planner:
         skipped_budget = skipped_restriction = 0
         for pool in by_merchant.values():
             for premium in (False, True):
-                picked = _pick(pool, units, c, premium, required, veg_enforced)
+                picked = _pick(pool, units, c, premium, required, veg_enforced, st.ai_serves,
+                               st.ai_restrictions)
                 if picked is None:
                     skipped_restriction += 1
                     continue
-                reasons = ["Atende as restrições verificáveis informadas" if c.dietary else "Sem restrições informadas"]
+                labels = ", ".join(restriction_label(r) for r in c.dietary)
+                reasons = [f"Considera as restrições: {labels}" if c.dietary else "Sem restrições alimentares informadas"]
                 warnings: list[str] = [
                     f"Restrição '{r}' não comprovada pelo iFood (filtro de busca solicitado): "
                     "confira a descrição do item" for r in unverified]
+                for r in sorted({r for o, _ in picked for r in required + option_requirements(c)
+                                 + (("vegetarian",) if VEGETARIAN_ALL in c.dietary or VEGETARIAN_OPTION in c.dietary
+                                    else ()) if ai_only(o, r, st.ai_restrictions)}):
+                    warnings.append(f"Restrição '{restriction_label(r)}' avaliada pela IA pelo nome do item "
+                                    "(o iFood não informa): confirme com o restaurante antes de pedir")
                 if missing_terms:
-                    warnings.append(f"Não encontrei exatamente '{' '.join(sorted(missing_terms))}': "
-                                    "esta é a opção mais próxima do que você pediu")
+                    wanted = st.request_summary or " ".join(sorted(missing_terms))
+                    warnings.append(f"Não encontrei exatamente o que você pediu ({wanted}): "
+                                    "esta é a opção mais próxima")
                 rec = build_recommendation(pool[0], picked, st.data_origin, reasons, warnings)
                 known = rec["total_cents"] if rec["total_cents"] is not None else rec["subtotal_cents"]
                 if st.price_ceiling_cents is not None:
@@ -150,6 +177,8 @@ class Planner:
                     warnings.append("Orçamento não informado")
                 elif known > c.budget_cents:
                     skipped_budget += 1
+                    if st.cheapest_over_budget_cents is None or known < st.cheapest_over_budget_cents:
+                        st.cheapest_over_budget_cents = known
                     continue
                 else:
                     reasons.append("Dentro do orçamento")
@@ -173,6 +202,8 @@ class Planner:
                                "Nenhuma combinação atende e comprova orçamento e restrições.", "low",
                                limitations, ["orçamento ou restrições compatíveis com as ofertas"]
                                + [f"verificação da restrição '{r}'" for r in tag_requirements(c)])
+        ctx.events.agent_message("planner", "auditor", ctx.task_id, "request",
+                                 f"Confere {len(st.recommendations)} proposta(s): preços, totais, quantidade e restrições?")
         return AgentResult("planner", "done", {"recommendations": len(st.recommendations)},
                            f"{len(st.recommendations)} proposta(s) montada(s) por regra determinística.",
                            "medium", limitations)

@@ -52,6 +52,23 @@ class CuratorTest(unittest.TestCase):
         failed = [e["payload"] for e in events(sink, "tool_activity") if e["payload"]["tool_name"] == "raciocinio_ia"]
         self.assertTrue(failed and all(p["status"] == "failed" for p in failed))
 
+    def test_quota_reason_is_shown_to_manager(self):
+        runtime = FakeRuntime(offers=OFFERS)
+        runtime.reasoning = {}
+        orig = runtime.run
+        def run_with_quota(call):
+            if not call.allowed_tools:
+                from backend.agents.ports import RuntimeOutcome
+                runtime.reasoning_calls.append(call)
+                return RuntimeOutcome(ok=False, error="quota", retry_after_s=30)
+            return orig(call)
+        runtime.run = run_with_quota
+        sink = RecordingSink()
+        build_orchestrator(runtime, InMemoryMemory(), sink, customers=SQLiteCustomerMemory()).handle_message(
+            SessionContext("s1", "t", None, "demo", "quero pizza para 2 pessoas até R$ 200"))
+        notes = [e["payload"]["summary"] for e in events(sink, "tool_activity") if e["payload"]["tool_name"] == "raciocinio_ia"]
+        self.assertTrue(notes and all("cota da IA esgotada" in n for n in notes))
+
     def test_everything_rejected_means_ask_customer(self):
         reject = {"items": [{"product_id": p["product_id"], "fit": "nao", "reason": "não é pizza"} for p in OFFERS]}
         out, *_ = run(reasoning={"curator": reject})
@@ -64,6 +81,25 @@ class CuratorTest(unittest.TestCase):
         orch.handle_message(SessionContext("s1", "t", None, "demo", "agora são 3 pessoas"))
         curator_calls = [c for c in runtime.reasoning_calls if c.agent_id == "curator"]
         self.assertEqual((len(runtime.calls), len(curator_calls)), (1, 1))
+
+
+class ServesTest(unittest.TestCase):
+    COMBO = offer("c2", "Combo 2 Pizzas", 8800, "Just Pizza", "jp")
+
+    def test_combo_for_two_is_bought_once_when_ai_says_it_serves_two(self):
+        cur = {"items": [{"product_id": "c2", "fit": "sim", "reason": "combo com duas pizzas", "serves": 2}]}
+        out, *_ = run(offers=[self.COMBO], reasoning={"curator": cur}, text="quero pizza para 2 pessoas até R$ 150")
+        self.assertEqual([(i["name"], i["quantity"]) for i in out.recommendations[0]["items"]], [("Combo 2 Pizzas", 1)])
+
+    def test_without_serves_one_item_per_person(self):
+        cur = {"items": [{"product_id": "c2", "fit": "sim", "reason": "combo"}]}
+        out, *_ = run(offers=[self.COMBO], reasoning={"curator": cur}, text="quero pizza para 2 pessoas até R$ 200")
+        self.assertEqual(out.recommendations[0]["items"][0]["quantity"], 2)
+
+    def test_absurd_serves_is_ignored(self):
+        cur = {"items": [{"product_id": "c2", "fit": "sim", "reason": "x", "serves": 500}]}
+        out, *_ = run(offers=[self.COMBO], reasoning={"curator": cur}, text="quero pizza para 2 pessoas até R$ 200")
+        self.assertEqual(out.recommendations[0]["items"][0]["quantity"], 2)
 
 
 class StrategistTest(unittest.TestCase):

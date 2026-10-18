@@ -28,6 +28,7 @@ conversao_com_desconto_bps: 6500
 ## Limites e exceções
 topics: desconto, limites, exceções, restrições
 
-Não sugerir desconto quando faltarem dados de preço confiáveis ou quando o pedido estiver em modo
-real sem dados de margem fornecidos pela empresa. Nunca prometer desconto ao cliente antes da
+Não sugerir desconto quando faltarem dados de preço confiáveis. Em atendimento real sem dados de margem
+fornecidos pela empresa, a sugestão usa as hipóteses DEMO acima, é marcada como ilustrativa e serve só
+para o gestor avaliar. Nunca prometer desconto ao cliente antes da
 aprovação. Nunca combinar desconto com cupons do iFood sem regra explícita.

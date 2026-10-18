@@ -4,7 +4,8 @@ from __future__ import annotations
 from typing import Any
 
 from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, SessionContext, WorkingState,
-                     filtered_mark, slug, soft_unverified, tag_requirements)
+                     filtered_mark, option_requirements, restriction_label, slug, soft_unverified,
+                     tag_requirements)
 from .registry import AgentContext, AgentDefinition
 from .relevance import score
 
@@ -54,20 +55,44 @@ def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
     proven = "vegetarian" not in unverified
     ok_veg = (lambda t: "vegetarian" in t) if proven else \
         (lambda t: "vegetarian" in t or filtered_mark("VEGETARIAN") in t)
-    if VEGETARIAN_ALL in c.dietary and not all(ok_veg(t) for t in veg):
+    ai = st.ai_restrictions
+    ids = [i["product_id"] for i in items if i["product_id"] in by_id]
+    veg_ok = [ok_veg(by_id[pid].tags) or "vegetarian" in ai.get(pid, ()) for pid in ids]
+    if VEGETARIAN_ALL in c.dietary and not all(veg_ok):
         issues.append("Contém item não vegetariano")
-    if VEGETARIAN_OPTION in c.dietary and not any(ok_veg(t) for t in veg):
+    if VEGETARIAN_OPTION in c.dietary and not any(veg_ok):
         issues.append("Sem opção vegetariana")
+
+    def proof(pid: str, req: str) -> str | None:
+        """'tag' (iFood comprova), 'ia' (Curador avaliou pelo nome) ou None."""
+        if req in {slug(t) for t in by_id[pid].tags}:
+            return "tag"
+        return "ia" if req in ai.get(pid, ()) else None
+
+    by_ai: set[str] = {"vegetarian"} if any(
+        "vegetarian" in ai.get(pid, ()) and not ok_veg(by_id[pid].tags) for pid in ids) else set()
+    for req in option_requirements(c):
+        found = [proof(pid, req) for pid in ids if proof(pid, req)]
+        if not found:
+            issues.append(f"Sem opção {restriction_label(req)} para quem precisa")
+        elif "tag" not in found:
+            by_ai.add(req)
     for r in unverified:  # restrição branda sem tag: só passa se a proposta avisar o cliente
         if not any(f"'{r}' não comprovada" in w for w in rec["warnings"]):
             issues.append(f"Restrição '{r}' não comprovada sem aviso ao cliente")
-    for req in tag_requirements(c, st.offers):  # restrição sem comprovação nos dados nunca é aprovada
+    for req in tag_requirements(c, st.offers):  # sem tag do iFood nem avaliação da IA, nunca é aprovada
         for it in items:
-            offer = by_id.get(it["product_id"])
-            if offer is None or req not in {slug(t) for t in offer.tags}:
+            kind = proof(it["product_id"], req) if it["product_id"] in by_id else None
+            if kind is None:
                 issues.append(f"Restrição '{req}' não verificada em {it['product_id']}")
                 break
-    if c.party_size and sum(i["quantity"] for i in items) < c.party_size:
+            if kind == "ia":
+                by_ai.add(req)
+    for req in by_ai:  # avaliação da IA só passa se o cliente for avisado de que não há comprovação
+        if not any(f"'{restriction_label(req)}' avaliada pela IA" in w for w in rec["warnings"]):
+            issues.append(f"Restrição '{restriction_label(req)}' avaliada pela IA sem aviso ao cliente")
+    served = sum(i["quantity"] * st.ai_serves.get(i["product_id"], 1) for i in items)
+    if c.party_size and served < c.party_size:
         issues.append("Quantidade insuficiente para o número de pessoas")
     return issues
 
@@ -86,6 +111,10 @@ class Auditor:
         st.issues = {r["recommendation_id"]: audit_recommendation(r, st) for r in st.recommendations}
         st.approved_ids = [rid for rid, problems in st.issues.items() if not problems]
         rejected = len(st.issues) - len(st.approved_ids)
+        if rejected:  # devolve ao planejador o motivo, para o escritório ver a revisão entre os dois
+            first = next(p for p in st.issues.values() if p)
+            ctx.events.agent_message("auditor", "planner", ctx.task_id, "review",
+                                     f"Reprovei {rejected} proposta(s); ex.: {first[0]}")
         status = "done" if st.approved_ids else "needs_info"
         return AgentResult(
             "auditor", status, {"approved": len(st.approved_ids), "rejected": rejected},

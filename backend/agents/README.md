@@ -36,13 +36,22 @@ trava). Cada consulta aparece no escritório como `tool_activity` `raciocinio_ia
 
 | Agente | IA decide | Guarda-corpo no código |
 |---|---|---|
-| Curador (`curator`) | se cada item do iFood é o que o cliente pediu ("Pastel de Pizza" não é pizza) | só julga itens que vieram da busca; sem IA, filtro por palavras |
-| Memória do cliente (`customer_memory`) | — (responde fatos) | histórico autorizado e preferências, com origem |
-| Estrategista | ordem das opções e argumento de venda, após **perguntar à Memória** e ler a estratégia (RAG) | só reordena opções aprovadas; argumento sem números |
-| Descontos | se sugere desconto e quanto, após **perguntar à Memória** e ler a política (RAG) | nunca acima do máximo da política; lucro calculado no código; nunca aplicado |
+| Intérprete (`interpreter.py`) | o que o cliente quer, com o contexto da conversa: prato a buscar (corrige erros de digitação), pessoas ("eu e 3 amigos" = 4), orçamento, restrições (inclusive de parte do grupo: "um amigo é vegano" → `vegan_option`), preferências ("um já montado"), se é pedido, ajuste, confirmação ou papo, e conflito com o cadastro | R$ e "N pessoas" escritos vencem a IA; orçamento da IA só se a mensagem falar de dinheiro; restrições só acumulam; busca de 1–4 palavras; sem IA, as regras de `intent.py`/`chat.py` |
+| Curador (`curator`) | se cada item é o prato pedido, quantas pessoas serve, **quais restrições atende pelo nome** e, se nada serve, **pede ao Pesquisador outra busca** (uma vez; conflito Curador × Pesquisador) | só julga itens que vieram da busca; restrição avaliada pela IA exige aviso ao cliente; sem IA, filtro por palavras e restrição sem tag bloqueia |
+| Memória do cliente (`customer_memory`) | — (responde fatos) | histórico, cadastro (restrições/preferências) e desempenho das estratégias, com origem |
+| Estrategista | **estratégia de venda** (`favorito`, `custo_beneficio`, `premium`, `novidade`, `saudavel`), ordem e argumento, após **perguntar à Memória** quais estratégias convertem; diz ao Especialista em descontos se o cliente precisa de incentivo | só reordena opções aprovadas; argumento sem números |
+| Descontos | se sugere desconto e quanto (também em atendimento real, com hipóteses DEMO), ouvindo o Estrategista; se discordam, conflito resolvido pelo orquestrador | nunca acima do máximo da política; lucro calculado no código; nunca aplicado |
 | Orquestrador | texto final ao cliente | precisa citar restaurante e total exatos, sem outros valores, com os avisos |
 
 Planejador e auditor continuam por regra (dinheiro, orçamento, restrições, loja aberta, origem).
+Planejador ↔ Auditor também conversam (pedido de conferência e reprovações). Conflitos registrados:
+Curador × Pesquisador (nova busca), Planejador × Auditor (proposta reprovada), Orçamento × pedido
+(aberto até o cliente responder), Estrategista × Descontos e Pedido × cadastro (dieta por escolha cede ao
+pedido explícito; saúde nunca cede). "Fechado/pode ser" após uma sugestão registra a venda da estratégia
+(`StrategyOutcomePort`), base da monitoria na Análise financeira.
+
+Clientes fictícios da apresentação: `backend/memory/demo_seed.py` (cadastro, pedidos anteriores e
+resultado das estratégias), escolhidos no chat pelo nome no `initial_context` (`persona_key`).
 **O runtime real precisa suportar a chamada sem ferramentas** (ver `ATUALIZACAO.md`); até lá, a reserva vale.
 
 ## Portas (`ports.py`) — quem implementa

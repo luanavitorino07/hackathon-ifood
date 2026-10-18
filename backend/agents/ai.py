@@ -42,7 +42,10 @@ def ask(ctx: AgentContext, agent_id: str, system: str, prompt: str, schema: dict
         prompt=prompt, output_schema=schema, allowed_tools=(), max_tool_calls=0, timeout_s=AI_TIMEOUT_S))
     ok = outcome.ok and isinstance(outcome.structured, dict) and _matches(outcome.structured, schema)
     provider = "demo" if any(t.provider == "demo" for t in outcome.tool_calls) else "internal"
+    reason = {"quota": "cota da IA esgotada", "timeout": "IA demorou demais", "unavailable": "IA indisponível",
+              "invalid_output": "resposta da IA fora do formato"}.get(outcome.error or "",
+                                                                      "resposta da IA fora do formato")
     ctx.events.tool_activity(agent_id, f"ai_{ctx.task_id}", "raciocinio_ia", provider,
                              "succeeded" if ok else "failed", None,
-                             "IA consultada" if ok else "IA indisponível; regra de reserva usada")
+                             "IA consultada" if ok else f"{reason}; regra de reserva usada")
     return outcome.structured if ok else None  # type: ignore[return-value]
