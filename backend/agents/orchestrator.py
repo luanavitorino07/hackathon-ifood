@@ -113,7 +113,7 @@ class Orchestrator:
             text += " (sem taxas, que ainda não foram informadas)"
         notes = [w for w in rec["warnings"] if "não comprovada" in w or w.startswith("Taxa de serviço")]
         if notes:
-            text += ". Atenção: " + " ".join(notes)
+            text += ". Atenção: " + "; ".join(notes)
         text += ". Deseja confirmar este pedido?"
         if origin == "demo":
             text += " [dados de demonstração]"
