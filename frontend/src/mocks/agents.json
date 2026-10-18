@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "agents": [
+    {
+      "agent_id": "orchestrator",
+      "name": "Orquestrador",
+      "role": "Coordenação",
+      "description": "Coordenação",
+      "capabilities": [],
+      "enabled": true
+    },
+    {
+      "agent_id": "researcher",
+      "name": "Pesquisador",
+      "role": "Busca de ofertas",
+      "description": "Busca de ofertas",
+      "capabilities": [],
+      "enabled": true
+    },
+    {
+      "agent_id": "planner",
+      "name": "Planejador",
+      "role": "Montagem do pedido",
+      "description": "Montagem do pedido",
+      "capabilities": [],
+      "enabled": true
+    },
+    {
+      "agent_id": "strategist",
+      "name": "Estrategista",
+      "role": "Estratégia de vendas",
+      "description": "Estratégia de vendas",
+      "capabilities": [],
+      "enabled": true
+    },
+    {
+      "agent_id": "discount_specialist",
+      "name": "Especialista em descontos",
+      "role": "Políticas comerciais",
+      "description": "Políticas comerciais",
+      "capabilities": [],
+      "enabled": true
+    },
+    {
+      "agent_id": "auditor",
+      "name": "Auditor",
+      "role": "Validação",
+      "description": "Validação",
+      "capabilities": [],
+      "enabled": true
+    }
+  ]
+}
