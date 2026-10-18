@@ -214,12 +214,13 @@ def build_agent_services(*, runtime: Any, memory: Any, state: Any) -> AgentServi
 def build_demo_agent_services(
     *, runtime: Any, state: Any, memory: Any | None = None
 ) -> AgentServiceBundle:
-    """Compõe o MVP com a memória efêmera declarada pela branch de agentes."""
+    """Compõe os agentes com memória temporária, sem acoplar sua persistência."""
 
-    fakes = import_module("backend.agents.testing.fakes")
+    from .session_memory import EphemeralSessionMemory
+
     return build_agent_services(
         runtime=runtime,
-        memory=memory if memory is not None else fakes.InMemoryMemory(),
+        memory=memory if memory is not None else EphemeralSessionMemory(),
         state=state,
     )
 

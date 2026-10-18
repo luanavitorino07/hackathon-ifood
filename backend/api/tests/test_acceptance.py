@@ -155,11 +155,7 @@ def test_demo_http_acceptance_and_shared_context(main, monkeypatch):
     asyncio.run(scenario())
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="agents@784b57c: busca demo por 'comida' exclui pizzas (aceite 6 externo à API)",
-)
-def test_exact_food_preference_acceptance_pending_in_agents(main):
+def test_exact_food_preference_acceptance_with_integrated_agents(main):
     app = main.build_application(runtime_mode="demo")
 
     async def scenario():

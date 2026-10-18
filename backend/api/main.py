@@ -8,8 +8,8 @@ APP_RUNTIME_MODE=real seleciona OpenCode e exige seu servidor configurado.
 X-Demo-Role: admin só habilita o gestor no modo demo. O modo real ainda usa
 identidade local de comprador, salvo injeção de um IdentityResolver autenticado.
 
-A memória padrão é deliberadamente a implementação efêmera de demonstração da
-branch de agentes. Quando a memória persistente estiver disponível, o processo
+A memória padrão é deliberadamente operacional e efêmera, implementada na API.
+Quando a memória persistente estiver disponível, o processo
 de inicialização deve chamar ``build_application(memory=...)``.
 """
 
