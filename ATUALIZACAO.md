@@ -6,6 +6,13 @@
 Gabriel autorizou integrar `origin/front-end@87a429c`, `feat/audio-stt@d998d79` e o backend
 atual à main, preservando o design. Integração preparada na branch `integration/frontend-audio`.
 
+**Publicação concluída:** merge **`2337f00`** na `origin/main`, incluindo frontend e áudio.
+API 8000, Expo 8081 e proxy 8080 reiniciados a partir do checkout principal da main;
+OpenCode principal continua em 4096. Conferência final pelo proxy: HTML e bundle 200,
+overview do gestor 200, 8 agentes, comprador sem acesso ao catálogo administrativo,
+criação de sessão 201 em modo real e STT ativo rejeitando arquivo inválido com 422.
+Os processos temporários de teste não são o destino do proxy em 8080.
+
 ### O que a entrega integra
 
 - Interface Expo/React Native recebida da equipe: chatbot, dashboard, painel dos agentes
