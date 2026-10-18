@@ -7,9 +7,10 @@
       "url": "https://consumer-mcp.ifood.com.br/marketplace",
       "enabled": true,
       "oauth": {
-        "clientId": "{env:IFOOD_MCP_CLIENT_ID}",
-        "clientSecret": "{env:IFOOD_MCP_CLIENT_SECRET}",
-        "scope": "mcp.discovery.search.read"
+        "clientId": "{file:./backend/integrations/.local/ifood-client-id.txt}",
+        "clientSecret": "{file:./backend/integrations/.local/ifood-client-secret.txt}",
+        "scope": "mcp.discovery.search.read",
+        "redirectUri": "http://localhost:8080/callback"
       },
       "timeout": 10000
     }

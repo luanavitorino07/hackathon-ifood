@@ -16,6 +16,17 @@ Documentação interativa: http://127.0.0.1:8000/docs (com o servidor iniciado).
 
 ## Runtime
 
+### Credenciais locais do OpenCode
+
+O `opencode.json` aponta para dois arquivos privados, ignorados pelo Git:
+`backend/integrations/.local/ifood-client-id.txt` e
+`backend/integrations/.local/ifood-client-secret.txt`.
+Em um checkout novo, crie os arquivos com os valores do mesmo cliente OAuth
+antes de iniciar o OpenCode. Eles não são incluídos nos commits. O callback
+configurado é `http://localhost:8080/callback`, igual ao aprovado no portal deste
+agente; outro cliente pode exigir outro endereço previamente cadastrado.
+O Gemini/Anthropic é conectado separadamente pelo provedor no OpenCode.
+
 - `APP_RUNTIME_MODE=demo` (padrão): catálogo fictício dos agentes, sem rede,
   sem Gemini e sem OpenCode. Sessões/eventos/ofertas identificados como demo.
 - `APP_RUNTIME_MODE=real`: usa `OpenCodeAgentRuntime` e exige OpenCode Server,
