@@ -1,6 +1,7 @@
 """Orquestrador: seleciona agentes pelo registro, coordena a esteira e emite os eventos."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from .chat import classify, reply_for
@@ -10,6 +11,7 @@ from .models import AgentResult, AgentsOutput, Constraints, SessionContext, Work
 from .ports import AgentRuntimePort, EventSink, KnowledgePort, MemoryPort, RevisionConflict
 from .failures import classify_failure
 from .relevance import food_terms
+from .resumption import reusable_offers, signature
 from .registry import Agent, AgentContext, AgentDefinition, AgentRegistry
 
 ORCHESTRATOR_DEFINITION = AgentDefinition(
@@ -48,6 +50,12 @@ class Orchestrator:
                       {"constraints": constraints.to_dict(), "conversation": {"stage": "ordering"},
                        "search": {"terms": list(state.query_terms)}})
         events.agent_status(ORCHESTRATOR_ID, "running", None, "Planejando atendimento")
+        current_signature = signature(session, constraints, state.query_terms)
+        reuse = reusable_offers(self._memory.load(session.session_id).state, session, current_signature)
+        if reuse is not None:  # só mudou quantidade/orçamento: replaneja sem nova busca
+            state.offers, state.data_origin, why = reuse  # type: ignore[assignment]
+            events.agent_message(ORCHESTRATOR_ID, "researcher", new_id("task"), "resolution",
+                                 f"Pesquisa reaproveitada, sem nova busca: {why}")
 
         ran: set[str] = set()
         missing: list[str] = []
@@ -60,6 +68,9 @@ class Orchestrator:
             agent = pending[0]
             ran.add(agent.definition.agent_id)
             result = self._run_agent(agent, session, state, events)
+            if agent.definition.agent_id == "researcher" and result.status == "done" and state.offers:
+                self._persist(session.session_id, ORCHESTRATOR_ID, {"last_search": {
+                    "signature": current_signature, "at": time.time(), "count": len(state.offers)}})
             missing += result.missing_data
             limitations += result.limitations
             if result.status == "error":

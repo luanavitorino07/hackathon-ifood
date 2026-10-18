@@ -80,6 +80,16 @@ não há o prato exato ("opção mais próxima"); sem nenhuma oferta aderente, p
 sugerir outra coisa. O auditor rejeita item sem relação com o pedido ou de restaurante fechado.
 Pedido genérico ("quero comida") não é filtrado.
 
+## Retomada incremental (`resumption.py`)
+Mensagens seguintes do mesmo atendimento reaproveitam a última pesquisa, **sem chamar o runtime**, quando a
+assinatura não mudou: prato (`search.terms`), restrições alimentares, localização do `initial_context` e
+modo. Mudar só quantidade de pessoas, orçamento ou pedir "mais barato" replaneja com as mesmas ofertas
+(`candidates` na memória). Nova busca quando: prato, restrição, localização ou modo mudam; a pesquisa tem
+mais de 10 min (`SEARCH_TTL_S`, não congela preço/disponibilidade); o cliente pede ("busca de novo",
+"outras opções"); a anterior falhou ou veio vazia; ou a sessão é `real` e os dados guardados não são
+`ifood_mcp`. Memória: `last_search` = `{signature, at, count}`, gravado só após pesquisa bem-sucedida.
+O gestor vê `agent_message` "Pesquisa reaproveitada, sem nova busca".
+
 ## Conversa (`chat.py`)
 Classificação por regras, sem LLM. Só mensagens de **pedido** (comida, orçamento, pessoas) rodam
 a esteira e chamam o runtime. Saudação, agradecimento, despedida, pedido vago, dúvida e texto
@@ -110,7 +120,8 @@ Eventos de agentes: `visibility="admin"`; resposta ao cliente e recomendações:
 
 ## Memória: chaves que o módulo escreve
 `constraints` (`budget_cents, party_size, dietary, preferences`), `conversation` (`stage`),
-`shown` (`recommendation_id`, `total_cents` da última recomendação mostrada), `candidates`,
+`shown` (`recommendation_id`, `total_cents` da última recomendação mostrada), `search` (`terms`),
+`last_search` (`signature`, `at`, `count`), `candidates`,
 `data_origin`, `proposals`, `audit` (`approved`, `issues`). O módulo de memória
 pode guardá-las como JSON opaco.
 
