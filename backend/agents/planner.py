@@ -25,13 +25,17 @@ def has_tags(offer: Offer, required: tuple[str, ...]) -> bool:
 
 
 def _pick(pool: list[Offer], units: int, c: Constraints, premium: bool, required: tuple[str, ...],
-          veg_enforced: bool) -> list[tuple[Offer, int]] | None:
-    """Escolhe `units` itens de um restaurante. None se as restrições não puderem ser atendidas."""
+          veg_enforced: bool, serves: dict[str, int] | None = None) -> list[tuple[Offer, int]] | None:
+    """Escolhe itens de um restaurante até servir `units` pessoas (a IA informa quantas pessoas cada
+    item serve; sem isso, 1 por pessoa). None se as restrições não puderem ser atendidas."""
+    serves = serves or {}
+    portions = lambda o: serves.get(o.product_id, 1)  # noqa: E731
     eligible = [o for o in pool if has_tags(o, required)
                 and not (VEGETARIAN_ALL in c.dietary and not is_vegetarian(o, veg_enforced))]
     if not eligible:
         return None
-    ordered = sorted(eligible, key=lambda o: (o.unit_price_cents, o.product_id), reverse=premium)
+    # econômica: menor preço por pessoa atendida
+    ordered = sorted(eligible, key=lambda o: (o.unit_price_cents / portions(o), o.product_id), reverse=premium)
     chosen: list[Offer] = []
     if VEGETARIAN_OPTION in c.dietary and VEGETARIAN_ALL not in c.dietary:
         veg = [o for o in ordered if is_vegetarian(o, veg_enforced)]
@@ -40,7 +44,7 @@ def _pick(pool: list[Offer], units: int, c: Constraints, premium: bool, required
         chosen.append(veg[0])
     # econômica: completa com o item mais barato; a outra opção varia os itens (rodízio).
     fill = 0
-    while len(chosen) < max(units, 1):
+    while sum(portions(o) for o in chosen) < max(units, 1):
         chosen.append(ordered[fill % len(ordered)] if premium else ordered[0])
         fill += 1
     counts: dict[str, int] = defaultdict(int)
@@ -127,7 +131,7 @@ class Planner:
         skipped_budget = skipped_restriction = 0
         for pool in by_merchant.values():
             for premium in (False, True):
-                picked = _pick(pool, units, c, premium, required, veg_enforced)
+                picked = _pick(pool, units, c, premium, required, veg_enforced, st.ai_serves)
                 if picked is None:
                     skipped_restriction += 1
                     continue

@@ -83,6 +83,25 @@ class CuratorTest(unittest.TestCase):
         self.assertEqual((len(runtime.calls), len(curator_calls)), (1, 1))
 
 
+class ServesTest(unittest.TestCase):
+    COMBO = offer("c2", "Combo 2 Pizzas", 8800, "Just Pizza", "jp")
+
+    def test_combo_for_two_is_bought_once_when_ai_says_it_serves_two(self):
+        cur = {"items": [{"product_id": "c2", "fit": "sim", "reason": "combo com duas pizzas", "serves": 2}]}
+        out, *_ = run(offers=[self.COMBO], reasoning={"curator": cur}, text="quero pizza para 2 pessoas até R$ 150")
+        self.assertEqual([(i["name"], i["quantity"]) for i in out.recommendations[0]["items"]], [("Combo 2 Pizzas", 1)])
+
+    def test_without_serves_one_item_per_person(self):
+        cur = {"items": [{"product_id": "c2", "fit": "sim", "reason": "combo"}]}
+        out, *_ = run(offers=[self.COMBO], reasoning={"curator": cur}, text="quero pizza para 2 pessoas até R$ 200")
+        self.assertEqual(out.recommendations[0]["items"][0]["quantity"], 2)
+
+    def test_absurd_serves_is_ignored(self):
+        cur = {"items": [{"product_id": "c2", "fit": "sim", "reason": "x", "serves": 500}]}
+        out, *_ = run(offers=[self.COMBO], reasoning={"curator": cur}, text="quero pizza para 2 pessoas até R$ 200")
+        self.assertEqual(out.recommendations[0]["items"][0]["quantity"], 2)
+
+
 class StrategistTest(unittest.TestCase):
     TWO = [offer("a", "Pizza Calabresa", 3000, "Pizzaria A", "a"), offer("b", "Pizza Mussarela", 4000, "Pizzaria B", "b")]
 

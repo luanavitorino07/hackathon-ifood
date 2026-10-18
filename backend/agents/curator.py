@@ -16,12 +16,13 @@ MAX_ITEMS = 25
 SYSTEM = ("Você é o Curador de um chatbot de compras de comida. Julgue, item por item, se ele atende ao "
           "pedido do cliente como refeição: 'sim' (é o que foi pedido), 'parcial' (parecido, mas não exato) "
           "ou 'nao' (outro prato, sobremesa/bebida quando pediram refeição, porção pequena demais para o "
-          "pedido, acompanhamento). Use só os itens informados; não invente itens nem preços. Motivo em até "
-          "12 palavras, em português.")
+          "pedido, acompanhamento). Em 'serves', diga para quantas pessoas o item serve (ex.: lanche ou "
+          "marmita = 1; pizza grande ou 'combo 2 pizzas' = 2; combo família = 4); use null se não der para saber. "
+          "Use só os itens informados; não invente itens nem preços. Motivo em até 12 palavras, em português.")
 SCHEMA = {"type": "object", "required": ["items"], "properties": {"items": {"type": "array", "items": {
     "type": "object", "required": ["product_id", "fit", "reason"], "properties": {
         "product_id": {"type": "string"}, "fit": {"type": "string", "enum": ["sim", "parcial", "nao"]},
-        "reason": {"type": "string"}}}}}}
+        "reason": {"type": "string"}, "serves": {"type": ["integer", "null"]}}}}}}
 
 
 class Curator:
@@ -49,6 +50,8 @@ class Curator:
         known = {o.product_id for o in st.offers}
         st.ai_fit = {i["product_id"]: (i["fit"], i["reason"].strip()[:120])
                      for i in answer["items"] if i["product_id"] in known}
+        st.ai_serves = {i["product_id"]: i["serves"] for i in answer["items"]
+                        if i["product_id"] in known and isinstance(i.get("serves"), int) and 1 <= i["serves"] <= 12}
         good = [pid for pid, (fit, _) in st.ai_fit.items() if fit == "sim"]
         bad = [(pid, why) for pid, (fit, why) in st.ai_fit.items() if fit == "nao"]
         names = {o.product_id: o.name for o in st.offers}

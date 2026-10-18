@@ -78,6 +78,8 @@ class Orchestrator:
             if isinstance(curation, dict) and curation.get("signature") == current_signature:
                 state.ai_fit = {k: (v[0], v[1]) for k, v in (curation.get("fit") or {}).items()
                                 if isinstance(v, list) and len(v) == 2}
+                state.ai_serves = {k: v for k, v in (curation.get("serves") or {}).items()
+                                   if isinstance(v, int) and 1 <= v <= 12}
             events.agent_message(ORCHESTRATOR_ID, "researcher", new_id("task"), "resolution",
                                  f"Pesquisa reaproveitada, sem nova busca: {why}")
 
@@ -94,7 +96,8 @@ class Orchestrator:
             result = self._run_agent(agent, session, state, events)
             if agent.definition.agent_id == "curator" and state.ai_fit:
                 self._persist(session.session_id, ORCHESTRATOR_ID, {"curation": {
-                    "signature": current_signature, "fit": {k: list(v) for k, v in state.ai_fit.items()}}})
+                    "signature": current_signature, "fit": {k: list(v) for k, v in state.ai_fit.items()},
+                    "serves": dict(state.ai_serves)}})
             if agent.definition.agent_id == "researcher" and result.status == "done" and state.offers:
                 self._persist(session.session_id, ORCHESTRATOR_ID, {"last_search": {
                     "signature": current_signature, "at": time.time(), "count": len(state.offers)}})

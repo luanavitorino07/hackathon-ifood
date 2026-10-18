@@ -67,7 +67,8 @@ def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
             if offer is None or req not in {slug(t) for t in offer.tags}:
                 issues.append(f"Restrição '{req}' não verificada em {it['product_id']}")
                 break
-    if c.party_size and sum(i["quantity"] for i in items) < c.party_size:
+    served = sum(i["quantity"] * st.ai_serves.get(i["product_id"], 1) for i in items)
+    if c.party_size and served < c.party_size:
         issues.append("Quantidade insuficiente para o número de pessoas")
     return issues
 

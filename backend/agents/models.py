@@ -152,6 +152,7 @@ class WorkingState:
     relevance_miss: bool = False  # nenhuma oferta corresponde ao prato pedido
     customer_profile: Any = None  # CustomerProfile de atendimentos anteriores, se houver
     ai_fit: dict[str, tuple[str, str]] = field(default_factory=dict)  # product_id -> (sim|parcial|nao, motivo)
+    ai_serves: dict[str, int] = field(default_factory=dict)  # product_id -> pessoas que o item serve (IA)
     pitch: str | None = None  # argumento de venda escrito pela IA do estrategista
 
 
