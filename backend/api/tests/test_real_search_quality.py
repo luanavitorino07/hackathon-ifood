@@ -196,3 +196,98 @@ def test_query_substitution_is_rejected_without_automatic_retry():
     assert outcome.detail == "invalid_query"
     assert len(mock.calls) == 1
     assert outcome.tool_calls == ()
+
+
+@pytest.mark.parametrize(
+    "text, product",
+    [
+        (
+            "quero marmita parmegiana pra 2 pessoas por 100 conto no maximo, busque melhor preço",
+            "marmita parmegiana",
+        ),
+        ("na verdade quero pizza", "pizza"),
+        ("me vê um xis salada pfv", "xis salada"),
+    ],
+)
+def test_claude_review_phrases_through_agents_runtime_and_http(text, product):
+    mock = MockSearchClient(product, [item(product, "p1", "m1", 20)])
+    runtime = OpenCodeAgentRuntime(
+        OpenCodeSettings(),
+        sandbox_location=SandboxLocation(-23.55, -46.63),
+        client_factory=lambda: mock,
+    )
+    app = build_application(runtime=runtime, runtime_mode="real")
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://test"
+        ) as c:
+            sid = (await c.post("/api/v1/sessions", json={"client_id": None})).json()["session_id"]
+            await c.post(
+                "/api/v1/chat/messages",
+                json={
+                    "session_id": sid,
+                    "client_message_id": "regression",
+                    "text": text,
+                    "input_mode": "text",
+                    "transcription_id": None,
+                },
+            )
+            snapshot = (await c.get(f"/api/v1/sessions/{sid}/snapshot")).json()
+            assert snapshot["recommendations"]
+            assert all(
+                i["name"] == product for r in snapshot["recommendations"] for i in r["items"]
+            )
+            assert len(mock.calls) == 1
+
+    asyncio.run(scenario())
+
+
+def test_cheaper_after_expired_search_uses_remembered_product_not_word_algo():
+    mock = MockSearchClient("pizza", [item("pizza", "p1", "m1", 20)])
+    runtime = OpenCodeAgentRuntime(
+        OpenCodeSettings(),
+        sandbox_location=SandboxLocation(-23.55, -46.63),
+        client_factory=lambda: mock,
+    )
+    app = build_application(runtime=runtime, runtime_mode="real")
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://test"
+        ) as c:
+            sid = (await c.post("/api/v1/sessions", json={"client_id": None})).json()["session_id"]
+            for index, text in enumerate(["Quero pizza até R$ 100", "tem algo mais barato?"]):
+                if index:
+                    stored = app.state.memory.load(sid)
+                    app.state.memory.save_patch(
+                        sid,
+                        {"last_search": {**stored.state["last_search"], "at": 0}},
+                        stored.revision,
+                        "test_expiration",
+                    )
+                    mock.items = [item("pizza", "p1", "m1", 15)]
+                await c.post(
+                    "/api/v1/chat/messages",
+                    json={
+                        "session_id": sid,
+                        "client_message_id": f"message_{index}",
+                        "text": text,
+                        "input_mode": "text",
+                        "transcription_id": None,
+                    },
+                )
+            snapshot = (await c.get(f"/api/v1/sessions/{sid}/snapshot")).json()
+            assert snapshot["recommendations"]
+            assert snapshot["recommendations"][0]["items"][0]["unit_price_cents"] == 1500
+            assert len(mock.calls) == 2
+            assert "Produto desejado: pizza." in mock.calls[-1]["prompt"]
+
+    asyncio.run(scenario())
+
+
+def test_evidence_ttl_matches_agent_resumption():
+    from backend.agents.resumption import SEARCH_TTL_S
+    from backend.integrations.search_quality import SearchEvidenceStore
+
+    assert SEARCH_TTL_S == SearchEvidenceStore()._ttl == 300

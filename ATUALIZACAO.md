@@ -10,13 +10,20 @@
   Sem a linha do produto, não exige termos. Detecção de personalização continua
   separada, com compatibilidade para retirar ingrediente do nome base antes do PR #8.
 - Adicionados testes das quatro frases apontadas, pedido genérico e compatibilidade
-  de ingrediente a retirar. Agentes/memória não foram editados; o PR #8 não foi
-  incorporado por fora. Revisão e pendências do Claude estão preservadas abaixo.
+  de ingrediente a retirar, incluindo testes ponta a ponta HTTP/agentes/runtime
+  simulado. O pedido "tem algo mais barato?" após expiração usa o prato lembrado.
+- Integrado o commit existente `b6fe31c` do Claude (PR #8), sem editar os arquivos
+  dele: retomada e evidências agora usam **5 minutos**, e personalização não vira
+  termo obrigatório do prato. O PR #9 leva esse alinhamento junto à entrega;
+  a revisão original abaixo foi preservada como histórico.
 - Avisos completos ficam em `Recommendation.warnings`; o chat tem só uma frase
   curta sobre confirmação de preço/disponibilidade/personalização. Sem alterar
   layout ou contrato HTTP.
 - Este PR publica a entrega e este relatório na main conforme autorização do
   Lorenzo. A conclusão depende do merge confirmado no GitHub, não só do push.
+- Resultado final após atender a revisão: **229 testes aprovados, 1 teste real
+  opt-in pulado, nenhuma falha nem xfail**. Lint aprovado nos arquivos próprios
+  alterados. Nenhuma chamada adicional ao Gemini ou iFood nesta revisão.
 
 ## Entrega Codex — qualidade da busca e catálogo — 18/10/2026
 
@@ -50,8 +57,8 @@ preservando os recados anteriores e mantendo código em PR revisado.
 
 ### Alterações locais do Codex (API / integrations)
 
-- `search_quality.py`: guarda lexical sem cardápio/allowlist de pratos. Extrai a
-  linha do pedido (não usa preferências antigas como substituto), normaliza acentos
+- `search_quality.py`: guarda lexical sem cardápio/allowlist de pratos. Usa a
+  linha `Produto desejado:` enviada pelo pesquisador, normaliza acentos
   e algumas grafias equivalentes, exige termos específicos na query e nos nomes
   retornados. Parmegiana de frango não aceita strogonoff/frango genérico como equivalente.
 - Prompt do runtime explicita os termos obrigatórios e proíbe substituições e
@@ -64,10 +71,11 @@ preservando os recados anteriores e mantendo código em PR revisado.
   oficial `onlyOpen=true`, ambos confirmados no schema. Não foram inventadas ferramentas.
 - Preservados preço unitário/promocional e frete do retorno MCP em centavos. O
   contrato v1 já tem `items[].unit_price_cents`; nenhum campo público novo foi criado.
-- Avisos conservadores vão em `Recommendation.warnings` E no texto do assistente:
+- Avisos conservadores completos vão em `Recommendation.warnings`:
   abertura filtrada pelo iFood no momento da consulta (entrega não garantida), distância desconhecida, personalização/ingredientes
   não verificados e preço base sem adicionais não comprovados. Fallback público
   também deixa explícito que não confirma entrega no endereço do comprador.
+  O chat acrescenta só uma frase curta de confirmação, sem repetir os detalhes.
 - Avisos usam evidências mínimas efêmeras, isoladas por sessão e produto/loja,
   limitadas a 256 sessões/250 itens por sessão e validade de 5 minutos. Não guardam
   prompt, endereço, token ou payload bruto; não são cache de ofertas nem corrigem

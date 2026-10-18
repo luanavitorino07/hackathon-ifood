@@ -30,7 +30,9 @@ contexto compartilhado e isolamento de eventos HTTP/SSE entre comprador e gestor
 ## Qualidade e limites da busca
 
 O runtime real protege a especificidade do pedido com uma guarda lexical: a query
-e os nomes dos itens devem manter os termos significativos do prato solicitado.
+e os nomes dos itens devem manter os termos de `Produto desejado:` que o pesquisador
+envia. Não há outra extração de prato por stopwords na integração. Sem essa linha,
+não há termos obrigatórios; a classificação e a limpeza pertencem aos agentes.
 Não há lista fechada de pratos. Retorno de strogonoff não é promovido a parmegiana
 de frango; se nada corresponder, a lista fica vazia, sem pesquisa extra automática.
 Isso é conservador: sinônimos não normalizados, descrições incompletas e consultas
@@ -49,7 +51,8 @@ Se todas as lojas estiverem fechadas, devolve lista vazia. Ausência do status n
 vira um booleano verdadeiro inventado. Abertura é referida ao momento da consulta.
 
 Avisos de entrega ainda não garantida, distância, ingredientes, alterações e preço
-dos complementos não confirmados são preservados em `Recommendation.warnings` e no chat.
+dos complementos não confirmados são preservados em `Recommendation.warnings`.
+O chat acrescenta só uma frase curta de confirmação, sem repetir todos os avisos.
 Uma busca com coordenadas públicas não confirma entrega no endereço do usuário.
 Não foram criados campos HTTP de modificadores nem novas ferramentas MCP.
 
@@ -156,6 +159,8 @@ do mesmo atendimento são reidratados quando só muda quantidade ou orçamento.
 Os testes HTTP de retomada passam normalmente com memória efêmera e SQLite,
 sem `xfail`, incluindo alteração de orçamento e quantidade em sequência. Isso não
 equivale a persistir todo o atendimento HTTP entre reinícios.
+O alinhamento do Claude no PR #8 também está integrado: a validade da retomada e
+das evidências é de cinco minutos, e remoções de ingredientes não viram o prato base.
 
 Em outro terminal, o teste de fumaça real é opt-in:
 
