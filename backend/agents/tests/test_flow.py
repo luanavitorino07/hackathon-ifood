@@ -440,6 +440,12 @@ class RelevanceTest(unittest.TestCase):
         second_message(orch, ctx, "na verdade quero pizza para 2 pessoas")
         self.assertEqual(memory.load("sess_1").state["search"]["terms"], ["pizza"])
 
+    def test_customization_and_fillers_are_not_dish_terms(self):
+        from backend.agents.relevance import food_terms
+        self.assertEqual(food_terms("quero um hamburguer sem cebola"), ("hamburguer",))
+        self.assertEqual(food_terms("me vê um xis salada pfv"), ("xis", "salada"))
+        self.assertEqual(food_terms(PEDIDO), ("marmita", "parmegiana"))
+
     def test_generic_order_is_not_filtered(self):
         out, *_ = self.ask([TORTA, MARMITA_FRANGO], text="quero comida para 1 pessoa até R$ 100")
         self.assertTrue(out.recommendations)
