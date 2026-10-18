@@ -4,6 +4,41 @@
 > (`3e558d8`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 > As seções anteriores foram preservadas abaixo como histórico.
 
+## ✅ LISTA DO LORENZO — tudo que falta atualizar (Claude, 18/10/2026, `main@e700f39`)
+
+PR #14 (agentes com IA) **já está na `main`**. Em ordem de prioridade:
+
+1. **[BLOQUEIA a IA no modo real] Runtime aceitar "chamada de raciocínio" sem ferramentas.**
+   `RuntimeCall.allowed_tools == ()` e `max_tool_calls == 0` → rodar no OpenCode com todas as tools
+   desligadas, `system=call.system`, `format: json_schema` com `call.output_schema`, respeitando `timeout_s`;
+   devolver `RuntimeOutcome(ok=True, structured=<structured_output>, tool_calls=())`. Erros iguais aos da
+   busca (`invalid_output`, `quota`, `timeout`, `unavailable`). Não passar por `SearchIntent`/`onlyOpen` nem
+   marcar `ifood_mcp`. Hoje volta `tool_not_allowed` → os agentes usam a regra de reserva. Detalhes na seção
+   "PRIORIDADE — Agentes passam a usar IA de verdade" logo abaixo.
+2. **[ÚNICA FALHA DA SUÍTE NA `main`] `backend/api/tests/test_acceptance.py:124`**: trocar
+   `len(catalog.json()["agents"]) == 6` por `== 8` (novos: `curator`, `customer_memory`). Hoje: 1 failed,
+   113 passed.
+3. **[PRONTO, falta PR] Sua `feat/integrations` (`e86492c`, `8512f8d`)** — revisada pelo Claude e aprovada:
+   gestor local no modo real (`--local-demo-admin`, só loopback) + **cookie `HttpOnly` para o SSE do
+   navegador** (testado: SSE do gestor só com cookie recebeu 26 eventos; cliente e cookie falso → 403),
+   `SQLiteMemory` padrão na API, modo de teste com lojas fechadas (pedido bloqueado com 409).
+   Faça `git merge origin/main` (sem conflitos, testado), rode a suíte e abra o PR.
+4. **[QUALIDADE] Afrouxar `SearchIntent.matches` agora que existe o Curador (IA).** Hoje o filtro por palavra
+   corta "Big Mac"/"X-Bacon" para "hamburguer" **antes** de a IA ver. Proposta: manter `validate_query`
+   (query limpa) mas não descartar itens por nome; o Curador decide relevância e o filtro por palavras dos
+   agentes vira só reserva quando a IA falhar. Combinar antes de mexer.
+5. **[OPCIONAL, só modo teste] Lojas fechadas no `--include-closed-restaurants`:** hoje o `is_open` é omitido
+   para elas aparecerem, então os agentes não conseguem preferir as abertas quando há das duas. Sugestão:
+   mandar `is_open: false` + tag de teste e os agentes rebaixam (Claude implementa a parte dos agentes).
+6. **[PARA A LUANA, registrar no README da API]** O escritório deve chamar **uma vez**
+   `GET /api/v1/admin/overview` com `X-Demo-Role: admin` (gera o cookie) e só depois abrir o `EventSource`.
+7. **[NO FINAL] Trocar o modelo do OpenCode para Claude (API Anthropic)** — `OPENCODE_PROVIDER_ID`/
+   `OPENCODE_MODEL_ID`; não precisa refazer o OAuth do iFood. Com IA em todos os agentes são ~4–5 chamadas
+   de IA por pedido; o Gemini gratuito não aguenta uma demonstração inteira.
+
+Já resolvido por você e conferido: `onlyOpen` + `is_open`, `SearchIntent` lendo `Produto desejado:`,
+aviso curto no chat, xfail da retomada retirado, TTL de 5 min.
+
 ## PRIORIDADE — Agentes passam a usar IA de verdade (decisão do Gabriel, PR #14) (18/10/2026)
 
 **Decisão do Gabriel:** os agentes estavam quase só por regras (a IA só montava a busca). Agora cada
@@ -43,7 +78,7 @@ Retomada ("agora são 3 pessoas") reaproveita busca **e** julgamento do Curador 
 É a única falha da suíte API com o PR #14 (113/124 passam com `main`/`feat/integrations`).
 
 ### Estado
-PR #14 aberto (`98c05c1`). Agentes 123 testes OK (13 novos: Curador rejeita esfiha/pastel, IA não cria item,
+PR #14 **mergeado na `main`** (`e700f39`). Agentes 123 testes OK (13 novos: Curador rejeita esfiha/pastel, IA não cria item,
 reserva sem IA, desconto limitado à política, resposta com preço errado rejeitada, consultas à Memória).
 Demo offline (`python3 -m backend.agents.demo --roteiro --escritorio`) mostra a conversa com **IA SIMULADA**.
 
