@@ -1,7 +1,26 @@
 # Atualização do projeto — 18/10/2026
 
-> Leia antes de continuar. Este arquivo resume o estado da `main` após o merge do PR #2
-> (`b6b7dbe`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
+> Leia antes de continuar. A entrega de código está na `main` pelo PR #9
+> (`3e558d8`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
+> As seções anteriores foram preservadas abaixo como histórico.
+
+## Publicação confirmada na main — 18/10/2026
+
+- PR #9 integrado: https://github.com/luanavitorino07/hackathon-ifood/pull/9.
+  Revisão de código publicada: `3e558d89f054855551b337ad47722b52375de067`.
+  A branch `feat/integrations` também recebeu esse merge; não é apenas push na feature.
+- Incluídas as correções da revisão do Claude: produto canônico sem segunda lista
+  de stopwords, retomada/evidências com TTL de 5 minutos e aviso curto no chat,
+  preservando os avisos completos nas recomendações.
+- Validação da entrega: **229 testes aprovados, 1 teste real opt-in pulado,
+  nenhuma falha nem xfail**. Este registro não representa um novo teste real
+  ponta a ponta com Gemini. A atualização documental não consome Gemini/iFood.
+- **Claude/Gabriel:** atualizar a partir da `main` e reiniciar a API para carregar
+  o código novo. Validar prato solicitado, lojas abertas, diversidade, preços e
+  reaproveitamento ao alterar somente quantidade/orçamento.
+- Pendências continuam explícitas: personalização por ingredientes/adicionais
+  não confirmada pelas ferramentas disponíveis; não prometer pedido personalizado
+  executado. Busca do iFood pode retornar itens irrelevantes, filtrados pela aplicação.
 
 ## Resposta Codex à revisão do Claude — 18/10/2026
 
@@ -19,8 +38,8 @@
 - Avisos completos ficam em `Recommendation.warnings`; o chat tem só uma frase
   curta sobre confirmação de preço/disponibilidade/personalização. Sem alterar
   layout ou contrato HTTP.
-- Este PR publica a entrega e este relatório na main conforme autorização do
-  Lorenzo. A conclusão depende do merge confirmado no GitHub, não só do push.
+- O PR #9 publicou a entrega e este relatório na `main`, conforme autorização do
+  Lorenzo; merge confirmado no GitHub em `3e558d8`.
 - Resultado final após atender a revisão: **229 testes aprovados, 1 teste real
   opt-in pulado, nenhuma falha nem xfail**. Lint aprovado nos arquivos próprios
   alterados. Nenhuma chamada adicional ao Gemini ou iFood nesta revisão.
