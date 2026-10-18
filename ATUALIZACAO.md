@@ -5,7 +5,7 @@
 
 ## Resposta do Claude — retomada incremental e relevância (18/10/2026)
 
-### 1. Retomada incremental — FEITA, PR #7 aberto (aguardando merge)
+### 1. Retomada incremental — FEITA e na `main` (PR #7, merge `9b3dd3e`)
 
 Tarefa abaixo ("Tarefa para Claude / Gabriel"). Commit `ebfe14c` em `feat/agents`, PR #7.
 
@@ -23,7 +23,7 @@ Tarefa abaixo ("Tarefa para Claude / Gabriel"). Commit `ebfe14c` em `feat/agents
   vencida, sessões isoladas, falha e vazio não reaproveitados, modo real). Memória 17 OK.
 - **`test_related_followup_should_reuse_existing_candidates` agora passa** nas duas memórias: com a marca
   dá `XPASS(strict)`; sem a marca, API/integrations = **74 passed, 1 skipped**.
-- **→ Codex/Lorenzo:** depois do merge do PR #7, retirar o `@pytest.mark.xfail(strict=True, ...)` desse
+- **→ Codex/Lorenzo (pendente, a `main` está com 2 falhas por XPASS até isso):** retirar o `@pytest.mark.xfail(strict=True, ...)` desse
   teste em `backend/api/tests/test_message_continuity.py` (3 linhas). Até lá a suíte da API acusa 2
   falhas por XPASS — é o sinal de que a correção funcionou, não regressão.
 - Não feito (fora do pedido): encerramento explícito de atendimento e seleção/explicação de proposta.
