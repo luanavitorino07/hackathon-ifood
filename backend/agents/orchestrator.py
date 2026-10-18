@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .chat import classify, reply_for
 from .events import ORCHESTRATOR_ID, EventEmitter, new_id
 from .intent import constraints_from_initial_context, extract_constraints, overlay
 from .models import AgentResult, AgentsOutput, Constraints, SessionContext, WorkingState, tag_requirements
@@ -28,9 +29,13 @@ class Orchestrator:
     # ------------------------------------------------------------------
     def handle_message(self, session: SessionContext) -> AgentsOutput:
         events = EventEmitter(self._sink, session.session_id)
-        constraints = self._build_constraints(session)
+        constraints, in_order = self._build_constraints(session)
         state = WorkingState(constraints=constraints)
-        self._persist(session.session_id, ORCHESTRATOR_ID, {"constraints": constraints.to_dict()})
+        intent = classify(session.message_text, in_order)
+        if intent != "order":  # papo: responde direto, sem agentes e sem gastar cota
+            return self._chat_only(session, events, constraints, intent)
+        self._persist(session.session_id, ORCHESTRATOR_ID,
+                      {"constraints": constraints.to_dict(), "conversation": {"stage": "ordering"}})
         events.agent_status(ORCHESTRATOR_ID, "running", None, "Planejando atendimento")
 
         ran: set[str] = set()
@@ -53,12 +58,26 @@ class Orchestrator:
         state.missing_data = missing
         return self._finish(state, events, limitations)
 
-    def _build_constraints(self, session: SessionContext) -> Constraints:
-        """memória < session.constraints < initial_context < mensagem atual (explícita)."""
-        stored = Constraints.from_dict(self._memory.load(session.session_id).state.get("constraints"))
+    def _build_constraints(self, session: SessionContext) -> tuple[Constraints, bool]:
+        """memória < session.constraints < initial_context < mensagem atual (explícita).
+
+        Devolve também se já há um pedido em andamento (`conversation.stage == "ordering"`).
+        """
+        state = self._memory.load(session.session_id).state
+        stored = Constraints.from_dict(state.get("constraints"))
         merged = overlay(stored, session.constraints)
         merged = constraints_from_initial_context(session.initial_context, merged)
-        return extract_constraints(session.message_text, merged)
+        conversation = state.get("conversation")
+        in_order = isinstance(conversation, dict) and conversation.get("stage") == "ordering"
+        return extract_constraints(session.message_text, merged), in_order
+
+    def _chat_only(self, session: SessionContext, events: EventEmitter, constraints: Constraints,
+                   intent: str) -> AgentsOutput:
+        self._persist(session.session_id, ORCHESTRATOR_ID, {"constraints": constraints.to_dict()})
+        text = reply_for(intent, session.message_text)
+        events.agent_status(ORCHESTRATOR_ID, "waiting", None, f"Conversa ({intent}); aguardando o cliente")
+        events.assistant_message(text)
+        return AgentsOutput("waiting_customer", text, [])
 
     def _fail(self, events: EventEmitter, result: AgentResult) -> AgentsOutput:
         code, retryable = _ERROR_CODES.get(str(result.output.get("error")), ("AGENT_ERROR", False))

@@ -221,5 +221,54 @@ class ConstraintsTest(unittest.TestCase):
         self.assertEqual(orch.handle_message(ctx).session_status, "active")
 
 
+class ChatTest(unittest.TestCase):
+    def chat(self, text, runtime=None, **kw):
+        runtime = runtime or FakeRuntime()
+        orch, ctx, sink, memory = make(text, runtime, **kw)
+        return orch, ctx, sink, memory, runtime, orch.handle_message(ctx)
+
+    def test_small_talk_never_touches_runtime_and_asks_what_to_eat(self):
+        for text, must_ask in (("oi eae bot", True), ("Obrigado!", True), ("quero comer", True),
+                               ("Qual o horário de vocês?", True), ("asdfgh", True)):
+            _, _, sink, _, runtime, out = self.chat(text)
+            self.assertEqual(len(runtime.calls), 0, text)
+            self.assertEqual((out.session_status, out.recommendations), ("waiting_customer", []), text)
+            self.assertEqual(out.reply_text.count("?") >= 1, must_ask, text)
+            self.assertNotIn("recommendations_ready", sink.types())
+            self.assertEqual(sink.types()[-1], "chat_message")
+
+    def test_goodbye_does_not_search(self):
+        _, _, _, _, runtime, out = self.chat("tchau")
+        self.assertEqual((len(runtime.calls), out.session_status), (0, "waiting_customer"))
+
+    def test_greeting_with_order_still_runs_agents(self):
+        _, _, _, _, runtime, out = self.chat("oi, quero pizza")
+        self.assertEqual(len(runtime.calls), 1)
+        self.assertTrue(out.recommendations)
+
+    def test_followup_during_order_is_treated_as_order(self):
+        orch, ctx, _, memory = make("Quero comida para 2 pessoas até R$ 100")
+        orch.handle_message(ctx)
+        self.assertEqual(memory.load("sess_1").state["conversation"]["stage"], "ordering")
+        out = second_message(orch, ctx, "tem algo mais barato?")
+        self.assertTrue(out.recommendations or out.session_status == "waiting_customer")
+
+    def test_small_talk_does_not_start_an_order(self):
+        _, _, _, memory, _, _ = self.chat("oi")
+        self.assertNotIn("conversation", memory.load("sess_1").state)
+
+    def test_small_talk_still_remembers_initial_context_constraints(self):
+        orch, ctx, _, memory = make("oi")
+        ctx = SessionContext("sess_1", "t", None, "demo", "oi",
+                             initial_context={"restrictions": ["vegetariana"]})
+        orch.handle_message(ctx)
+        self.assertEqual(saved(memory)["dietary"], ["vegetarian"])
+
+    def test_chat_events_follow_contract(self):
+        _, _, sink, _, _, _ = self.chat("oi")
+        for e in sink.events:
+            self.assertEqual(set(e["payload"]), PAYLOAD_KEYS[e["type"]])
+
+
 if __name__ == "__main__":
     unittest.main()
