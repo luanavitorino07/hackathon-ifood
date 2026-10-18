@@ -10,7 +10,80 @@ from .registry import AgentContext, AgentDefinition
 from .relevance import score
 
 
+def _audit_totals(rec: dict[str, Any], st: WorkingState, issues: list[str]) -> None:
+    """Conferências de dinheiro, desconto, origem e orçamento (comuns a pedido e cesta)."""
+    items = rec["items"]
+    subtotal = sum(i["quantity"] * i["unit_price_cents"] for i in items)
+    if rec["subtotal_cents"] != subtotal:
+        issues.append("Subtotal não confere com os itens")
+    parts = (rec["delivery_fee_cents"], rec["other_fees_cents"])
+    expected = subtotal + parts[0] + parts[1] - rec["discount_cents"] if None not in parts else None
+    if rec["total_cents"] != expected:
+        issues.append("Total não confere (ou preenchido com taxas desconhecidas)")
+    if rec["discount_cents"] != 0:
+        issues.append("Desconto aplicado sem autorização")
+    if rec["data_origin"] != st.data_origin:
+        issues.append("Origem dos dados divergente da pesquisa")
+    shown = rec["total_cents"] if rec["total_cents"] is not None else rec["subtotal_cents"]
+    if st.constraints.budget_cents is not None and shown > st.constraints.budget_cents:
+        issues.append("Acima do orçamento informado")
+
+
+def audit_basket(rec: dict[str, Any], st: WorkingState) -> list[str]:
+    """Cesta de supermercado: cada produto veio da busca, é de um item da lista, do mesmo mercado,
+    aprovado pelo Montador e respeita as restrições (com aviso quando só a IA avaliou ou ninguém verificou)."""
+    from .grocery_basket import required_restrictions
+    issues: list[str] = []
+    by_id = {o.product_id: o for o in st.offers}
+    listed = {i.name for i in st.shopping_list}
+    seen_items: set[str] = set()
+    if not rec["items"]:
+        issues.append("Cesta sem itens")
+    required = required_restrictions(st)
+    ai_ran = bool(st.ai_fit)
+    for it in rec["items"]:
+        pid = it["product_id"]
+        offer = by_id.get(pid)
+        if offer is None:
+            issues.append(f"Produto {pid} não consta na busca")
+            continue
+        if offer.unit_price_cents != it["unit_price_cents"]:
+            issues.append(f"Preço de {pid} diverge da busca")
+        if offer.merchant_id != rec["merchant_id"]:
+            issues.append(f"Produto {pid} é de outro mercado")
+        if offer.is_open is False:
+            issues.append(f"Mercado de {pid} está fechado")
+        item = st.grocery_of.get(pid)
+        if item not in listed:
+            issues.append(f"Produto {pid} não corresponde a item da lista")
+        elif item in seen_items:
+            issues.append(f"Item '{item}' repetido na cesta")
+        else:
+            seen_items.add(item)
+        judged = st.ai_fit.get(pid)
+        if judged is not None and judged[0] == "nao":
+            issues.append(f"Produto {pid} rejeitado pelo Montador: {judged[1]}")
+        if not 1 <= it["quantity"] <= 50:
+            issues.append(f"Quantidade inválida em {pid}")
+        tags = {slug(t) for t in offer.tags}
+        for r in required:
+            if r in tags:
+                continue
+            label = restriction_label(r)
+            if not ai_ran:
+                if not any("Restrições não verificadas" in w for w in rec["warnings"]):
+                    issues.append(f"Restrição '{label}' não verificada sem aviso ao cliente")
+            elif r not in st.ai_restrictions.get(pid, ()):
+                issues.append(f"Restrição '{label}' não atendida em {pid}")
+            elif r not in LIFESTYLE_RESTRICTIONS and not any(f"'{label}' avaliada pela IA" in w for w in rec["warnings"]):
+                issues.append(f"Restrição '{label}' avaliada pela IA sem aviso ao cliente")
+    _audit_totals(rec, st, issues)
+    return issues
+
+
 def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
+    if st.shopping_list:
+        return audit_basket(rec, st)
     issues: list[str] = []
     c = st.constraints
     by_id = {o.product_id: o for o in st.offers}
@@ -116,7 +189,8 @@ class Auditor:
         rejected = len(st.issues) - len(st.approved_ids)
         if rejected:  # devolve ao planejador o motivo, para o escritório ver a revisão entre os dois
             first = next(p for p in st.issues.values() if p)
-            ctx.events.agent_message("auditor", "planner", ctx.task_id, "review",
+            author = "grocery_basket" if st.shopping_list else "planner"
+            ctx.events.agent_message("auditor", author, ctx.task_id, "review",
                                      f"Reprovei {rejected} proposta(s); ex.: {first[0]}")
         status = "done" if st.approved_ids else "needs_info"
         return AgentResult(

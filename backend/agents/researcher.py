@@ -36,6 +36,9 @@ OFFER_SCHEMA: dict[str, Any] = {
     },
 }
 
+GROCERIES = "GROCERIES"  # `merchantType` do searchOffers para supermercados
+MAX_STORE_SEARCHES = 4  # buscas extras dentro do mercado escolhido, para completar a lista
+
 SYSTEM = (
     "Você é o Pesquisador de um chatbot de compras. Use SOMENTE as ferramentas de busca "
     "autorizadas para listar ofertas reais. Não invente produtos nem preços; preços em centavos "
@@ -101,11 +104,13 @@ class Researcher:
     def should_activate(self, session: SessionContext, state: WorkingState) -> bool:
         return not state.offers
 
-    def _search(self, ctx: AgentContext, prompt: str, filters: list[str]) -> tuple[RuntimeOutcome, list[Offer], int]:
+    def _search(self, ctx: AgentContext, prompt: str, filters: list[str],
+                scope: dict[str, str] | None = None) -> tuple[RuntimeOutcome, list[Offer], int]:
         context = _tool_context(ctx.session, ctx.state)
         context.pop("dietary_filters", None)
         if filters:
             context["dietary_filters"] = filters
+        context.update(scope or {})  # `merchant_type` (vertical do iFood) e `merchant_id` (busca numa loja)
         outcome = ctx.runtime.run(RuntimeCall(
             agent_id="researcher", task_id=ctx.task_id, session_id=ctx.session.session_id,
             system=SYSTEM, prompt=prompt, output_schema=OFFER_SCHEMA,
@@ -139,7 +144,79 @@ class Researcher:
                     known.add(o.product_id)
         return found
 
+    def _run_groceries(self, ctx: AgentContext) -> AgentResult:
+        """Uma busca por item da lista em mercados; depois, os itens que faltam DENTRO do mercado que mais
+        cobriu a lista (cesta num só mercado = uma entrega)."""
+        st = ctx.state
+        offers: list[Offer] = []
+        known: set[str] = set()
+        origin: str | None = None
+        limitations: list[str] = []
+        failure: RuntimeOutcome | None = None
+
+        def search(item: Any, scope: dict[str, str]) -> None:
+            nonlocal origin, failure
+            prompt = (f"Pedido do cliente: {ctx.session.message_text}\nProduto desejado: {item.name}. Use somente "
+                      "estes termos na query da busca e ordene por relevância.\nCompra de supermercado"
+                      + (f"; tamanho pedido: {item.note}" if item.note else "") + ".")
+            outcome, found, _ = self._search(ctx, prompt, [], {"merchant_type": GROCERIES, **scope})
+            if not outcome.ok:
+                failure = failure or outcome
+                limitations.append(f"busca de '{item.name}' indisponível")
+                return
+            got = origin_of(outcome)
+            if origin is None:
+                origin = got
+            if got != origin:
+                limitations.append(f"busca de '{item.name}' com origem divergente descartada")
+                return
+            for o in found:
+                st.grocery_of.setdefault(o.product_id, item.name)
+                if o.product_id not in known:
+                    offers.append(o)
+                    known.add(o.product_id)
+
+        for item in st.shopping_list:
+            search(item, {})
+        if origin is None and failure is not None:
+            return AgentResult("researcher", "error", {"error": failure.error, "detail": failure.detail,
+                                                       "retry_after_s": failure.retry_after_s},
+                               f"Falha do runtime: {failure.error}", limitations=[f"runtime:{failure.error}"])
+        if ctx.session.mode == "real" and origin != "ifood_mcp":
+            return AgentResult("researcher", "error", {"error": "unverified_origin"},
+                               "Sessão real sem chamada MCP comprovada; resultado descartado.",
+                               limitations=["origem não verificada"])
+        coverage: dict[str, set[str]] = {}
+        for o in offers:
+            if o.is_open is not False:
+                coverage.setdefault(o.merchant_id, set()).add(st.grocery_of[o.product_id])
+        if coverage:
+            preferred = st.preferred_merchant_id if st.preferred_merchant_id in coverage else None
+            best = preferred or max(coverage, key=lambda m: (len(coverage[m]), m))
+            missing = [i for i in st.shopping_list if i.name not in coverage[best]][:MAX_STORE_SEARCHES]
+            if missing:
+                name = next(o.merchant_name for o in offers if o.merchant_id == best)
+                ctx.events.agent_message("researcher", "grocery_basket", ctx.task_id, "request",
+                                         f"{name} cobre {len(coverage[best])} de {len(st.shopping_list)} itens; "
+                                         f"procurando lá: {', '.join(i.name for i in missing)}")
+            for item in missing:
+                search(item, {"merchant_id": best})
+        st.offers, st.data_origin = offers, (origin or "demo")  # type: ignore[assignment]
+        if not offers:
+            return AgentResult("researcher", "needs_info", {"offers": 0},
+                               "Nenhum produto de mercado encontrado.", "low", limitations, ["ofertas disponíveis"])
+        merchants = {o.merchant_id for o in offers}
+        ctx.events.agent_message("researcher", "grocery_basket", ctx.task_id, "proposal",
+                                 f"Trouxe {len(offers)} produto(s) de {len(merchants)} mercado(s) para "
+                                 f"{len(st.shopping_list)} item(ns) da lista; pode montar a cesta?")
+        return AgentResult(
+            "researcher", "done", {"offers": len(offers), "merchants": len(merchants), "origin": st.data_origin},
+            f"{len(offers)} produto(s) de {len(merchants)} mercado(s) para {len(st.shopping_list)} item(ns); "
+            f"origem {st.data_origin}.", "high" if st.data_origin == "ifood_mcp" else "medium", limitations)
+
     def run(self, ctx: AgentContext) -> AgentResult:
+        if ctx.state.shopping_list:
+            return self._run_groceries(ctx)
         c = ctx.state.constraints
         terms = ctx.state.query_terms
         product = (f"Produto desejado: {' '.join(terms)}. Use somente estes termos na query da busca, "

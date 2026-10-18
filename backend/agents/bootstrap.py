@@ -5,18 +5,21 @@ from .auditor import Auditor
 from .curator import Curator
 from .customer_memory_agent import CustomerMemoryAgent
 from .discount import DiscountSpecialist
+from .grocery_basket import GroceryBasket
 from .orchestrator import Orchestrator
 from .planner import Planner
-from .ports import AgentRuntimePort, CustomerMemoryPort, EventSink, KnowledgePort, MemoryPort
+from .ports import AgentRuntimePort, CustomerMemoryPort, EventSink, KnowledgePort, MemoryPort, SchedulePort
 from .registry import AgentRegistry
 from .researcher import Researcher
+from .scheduler import Scheduler
+from .schedules import InMemorySchedules
 from .strategist import SalesStrategist
 
 
 def build_registry() -> AgentRegistry:
     registry = AgentRegistry()
     for agent in (Researcher(), Curator(), Planner(), Auditor(), SalesStrategist(), DiscountSpecialist(),
-                  CustomerMemoryAgent()):
+                  CustomerMemoryAgent(), GroceryBasket(), Scheduler()):  # catálogo na ordem; esteira por `order`
         registry.register(agent)
     return registry
 
@@ -45,7 +48,10 @@ def default_customers() -> CustomerMemoryPort | None:
 def build_orchestrator(runtime: AgentRuntimePort, memory: MemoryPort, sink: EventSink,
                        registry: AgentRegistry | None = None,
                        knowledge: KnowledgePort | None | object = _DEFAULT,
-                       customers: CustomerMemoryPort | None | object = _DEFAULT) -> Orchestrator:
+                       customers: CustomerMemoryPort | None | object = _DEFAULT,
+                       schedules: SchedulePort | None | object = _DEFAULT, clock=None) -> Orchestrator:
+    """`schedules`: agendamentos de compra (padrão: memória do processo; None desliga). `clock`: relógio UTC."""
     kb = default_knowledge() if knowledge is _DEFAULT else knowledge
     cm = default_customers() if customers is _DEFAULT else customers
-    return Orchestrator(registry or build_registry(), runtime, memory, sink, kb, cm)  # type: ignore[arg-type]
+    sc = InMemorySchedules() if schedules is _DEFAULT else schedules
+    return Orchestrator(registry or build_registry(), runtime, memory, sink, kb, cm, sc, clock)  # type: ignore[arg-type]

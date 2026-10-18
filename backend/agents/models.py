@@ -201,6 +201,15 @@ class WorkingState:
     needs_incentive: bool | None = None  # opinião do Estrategista para o Especialista em descontos
     strategy_performance: list[tuple[str, int, int]] = field(default_factory=list)  # (estratégia, oferecida, aceita)
     cheapest_over_budget_cents: int | None = None  # a combinação mais barata que estourou o orçamento
+    # ---- compra de supermercado (lista) e agendamento
+    shopping_list: tuple[Any, ...] = ()  # grocery.ListItem; vazio = pedido de comida
+    grocery_of: dict[str, str] = field(default_factory=dict)  # product_id -> item da lista que ele atende
+    ai_quantity: dict[str, int] = field(default_factory=dict)  # product_id -> unidades (IA, pelo tamanho pedido)
+    preferred_merchant_id: str | None = None  # mercado da cesta agendada (preferido na compra do dia)
+    schedule: Any = None  # grocery.ScheduleRequest pedido pelo cliente
+    schedule_plan: dict[str, Any] | None = None  # agendamento validado pelo Agendador
+    now: Any = None  # datetime UTC da mensagem (relógio do orquestrador)
+    reply_prefix: str | None = None  # abertura da resposta (ex.: compra agendada que chegou)
 
 
 @dataclass

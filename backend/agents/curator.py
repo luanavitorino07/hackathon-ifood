@@ -90,7 +90,7 @@ class Curator:
     order = 15
 
     def should_activate(self, session: SessionContext, state: WorkingState) -> bool:
-        return bool(state.offers) and not state.ai_fit
+        return bool(state.offers) and not state.ai_fit and not state.shopping_list
 
     def run(self, ctx: AgentContext) -> AgentResult:
         st, c = ctx.state, ctx.state.constraints

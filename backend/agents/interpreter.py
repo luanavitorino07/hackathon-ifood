@@ -14,9 +14,11 @@ from typing import Any
 
 from .ai import ask
 from .chat import classify
+from .grocery import (ListItem, ScheduleRequest, drops_schedule, edit_items, items_from_ai, list_text, now_label,
+                      parse_items, parse_schedule, schedule_from_ai, wants_groceries, wants_schedule)
 from .intent import normalize_restriction, wants_repeat
 from .models import (OPTION_SUFFIX, VEGETARIAN_ALL, VEGETARIAN_OPTION, Constraints, base_restriction,
-                     restriction_label)
+                     restriction_label, slug)
 from .registry import AgentContext, AgentDefinition
 from .relevance import food_terms
 
@@ -50,7 +52,14 @@ SYSTEM = (
     "intencao='conversa': resposta simpática em até 2 frases, terminando com uma pergunta sobre o que o "
     "cliente quer comer; pode citar o histórico do CLIENTE_JSON; sem preços; senão null. "
     "conflito_com_perfil: se o pedido contraria uma restrição do cadastro em CLIENTE_JSON, descreva numa "
-    "frase; senão null. Não invente nada que o cliente não disse.")
+    "frase; senão null. tipo: 'mercado' se é compra de supermercado (lista de produtos de mercado, 'compra do mês', "
+    "limpeza, higiene, hortifruti), senão 'comida' (prato pronto de restaurante). lista: se tipo='mercado', a lista "
+    "COMPLETA e atualizada (mantenha os itens de LISTA_ATUAL que continuam, acrescente ou tire o que o cliente pediu), "
+    "cada item {item: nome curto do produto, quantidade: unidades ou null, detalhe: tamanho/peso pedido como '5 kg' "
+    "ou null}; [] se comida. agendamento: se o cliente quer a compra numa data futura ou recorrente, {quer_agendar: "
+    "true, data: 'AAAA-MM-DD' ou null, hora: 'HH:MM' ou null, recorrencia: 'nenhuma'|'semanal'|'quinzenal'|'mensal'}, "
+    "resolvendo 'amanhã', 'sábado', 'dia 25' a partir de AGORA; null se não falou de agendar. "
+    "Não invente nada que o cliente não disse.")
 
 SCHEMA: dict[str, Any] = {
     "type": "object", "required": ["intencao", "busca", "pessoas", "orcamento_reais", "restricoes", "resumo"],
@@ -68,6 +77,15 @@ SCHEMA: dict[str, Any] = {
         "resumo": {"type": "string"},
         "resposta": {"type": ["string", "null"]},
         "conflito_com_perfil": {"type": ["string", "null"]},
+        "tipo": {"type": "string", "enum": ["comida", "mercado"]},
+        "lista": {"type": "array", "items": {
+            "type": "object", "required": ["item"],
+            "properties": {"item": {"type": "string"}, "quantidade": {"type": ["integer", "null"]},
+                           "detalhe": {"type": ["string", "null"]}}}},
+        "agendamento": {"type": ["object", "null"], "properties": {
+            "quer_agendar": {"type": "boolean"}, "data": {"type": ["string", "null"]},
+            "hora": {"type": ["string", "null"]},
+            "recorrencia": {"type": "string", "enum": ["nenhuma", "semanal", "quinzenal", "mensal"]}}},
     }}
 
 _MONEY_WORDS = re.compile(r"\d|reais|real\b|conto|pila|\bcem\b|\bmil\b", re.I)
@@ -83,7 +101,54 @@ class Reading:
     profile_conflict: str | None = None
     by_ai: bool = False
     extras: tuple[str, ...] = ()  # complementos pedidos junto (bebida, acompanhamento), um termo por item
+    groceries: tuple[ListItem, ...] | None = None  # compra de mercado (None = pedido de comida)
+    schedule: ScheduleRequest | None = None  # agendamento pedido (when None = falta dizer quando)
 
+
+def item_scoped(c: Constraints, base: Constraints, items: tuple[ListItem, ...]) -> Constraints:
+    """'leite sem lactose' é um produto da lista, não restrição da cesta inteira: restrição nova cuja palavra
+    aparece no nome de um item vale só para esse item (a busca já pede o produto assim)."""
+    keys = {"sugar-free": "acucar"}
+    names = " ".join(slug(i.name) for i in items)
+    kept = tuple(r for r in c.dietary if r in base.dietary
+                 or (keys.get(base_restriction(r)) or base_restriction(r).split("-")[0]) not in names)
+    return replace(c, dietary=kept)
+
+
+def grocery_parts(text: str, answer: dict[str, Any] | None, stored_list: tuple[ListItem, ...],
+                  stored_schedule: ScheduleRequest | None, now: Any) -> tuple[tuple[ListItem, ...] | None,
+                                                                         ScheduleRequest | None]:
+    """Lista e agendamento: a IA entende; as regras são reserva e guarda-corpo ('supermercado' escrito vence)."""
+    explicit = wants_groceries(text)
+    kind = answer.get("tipo") if answer else None
+    edited = edit_items(text, stored_list) if stored_list else None
+    if kind is None:  # sem IA (ou IA sem o campo): regras
+        from .relevance import food_terms
+        follow_up = bool(stored_list) and (edited is not None or wants_schedule(text) or drops_schedule(text)
+                                           or not food_terms(text))
+        if not (explicit or follow_up):
+            return None, None
+    elif kind == "comida" and not explicit:
+        return None, None
+    ai_items = items_from_ai(answer.get("lista")) if answer else ()
+    if ai_items:
+        items = ai_items
+    elif edited is not None:
+        items = edited
+    elif explicit:  # lista nova escrita na mensagem; mensagem sem itens mantém a lista guardada
+        items = parse_items(text) or stored_list
+    else:
+        items = stored_list
+    if drops_schedule(text):
+        return items, None
+    by_ai = schedule_from_ai(answer.get("agendamento"), now) if answer else None
+    by_rule = parse_schedule(text, now)
+    schedule = next((s for s in (by_ai, by_rule) if s is not None and s.when is not None), None) \
+        or by_ai or by_rule or stored_schedule
+    if (schedule is not None and schedule.recurrence == "none" and stored_schedule is not None
+            and stored_schedule.when is None):  # "toda semana" antes, "segunda às 9h" agora
+        schedule = ScheduleRequest(schedule.when, stored_schedule.recurrence)
+    return items, schedule
 
 def _restriction(kind: str, for_all: bool) -> str | None:
     n = normalize_restriction(kind)
@@ -112,9 +177,11 @@ def rule_reading(text: str, rules: Constraints, stored_terms: tuple[str, ...], i
 
 def interpret(ctx: AgentContext, base: Constraints, rules: Constraints, stored_terms: tuple[str, ...],
               in_order: bool, last_shown: str | None, facts: dict[str, Any],
-              stored_extras: tuple[str, ...] = ()) -> Reading:
+              stored_extras: tuple[str, ...] = (), stored_list: tuple[ListItem, ...] = (),
+              stored_schedule: ScheduleRequest | None = None) -> Reading:
     """`base`: restrições antes da mensagem; `rules`: depois das regras. A IA completa o que faltar."""
     text = ctx.session.message_text
+    now = ctx.state.now
     fallback = rule_reading(text, rules, stored_terms, in_order)
     state = {"pessoas": base.party_size,
              "orcamento_reais": None if base.budget_cents is None else base.budget_cents // 100,
@@ -124,9 +191,16 @@ def interpret(ctx: AgentContext, base: Constraints, rules: Constraints, stored_t
               f"COMPLEMENTOS_ANTERIORES: {json.dumps(list(stored_extras), ensure_ascii=False)}\n"
               f"ULTIMA_SUGESTAO: {last_shown or 'nenhuma'}\n"
               f"ESTADO: {json.dumps(state, ensure_ascii=False)}\n"
-              f"CLIENTE_JSON: {json.dumps(facts, ensure_ascii=False)}")
+              f"CLIENTE_JSON: {json.dumps(facts, ensure_ascii=False)}\n"
+              f"AGORA: {now_label(now) if now else 'desconhecido'}\n"
+              f"LISTA_ATUAL: {json.dumps([i.label() for i in stored_list], ensure_ascii=False)}\n"
+              f"AGENDAMENTO_ATUAL: {stored_schedule.to_dict() if stored_schedule else 'nenhum'}")
     answer = ask(ctx, INTERPRETER_ID, SYSTEM, prompt, SCHEMA)
     if answer is None:
+        items, schedule = grocery_parts(text, None, stored_list, stored_schedule, now)
+        if items is not None:
+            return Reading("order", (), item_scoped(replace(rules, party_size=None), base, items), None, None, None,
+                           False, (), items, schedule)
         return replace(fallback, extras=stored_extras if in_order else ())
     intent = {"pedido": "order", "ajuste": "order", "repetir": "repeat", "confirmar": "confirm",
               "conversa": "chat"}[answer["intencao"]]
@@ -161,9 +235,13 @@ def interpret(ctx: AgentContext, base: Constraints, rules: Constraints, stored_t
         reply = None  # fora do guarda-corpo: vale a resposta por regra
     conflict = answer.get("conflito_com_perfil")
     summary = " ".join(answer["resumo"].split())[:200] or None
-    return Reading(intent, terms, c, summary, reply,
-                   " ".join(conflict.split())[:200] if isinstance(conflict, str) and conflict.strip() else None,
-                   True, extras)
+    conflict = " ".join(conflict.split())[:200] if isinstance(conflict, str) and conflict.strip() else None
+    items, schedule = grocery_parts(text, answer, stored_list, stored_schedule, now)
+    if items is not None:  # compra de mercado: lista no lugar do prato; quantidade de pessoas não se aplica
+        intent = "confirm" if intent == "confirm" else "order"
+        return Reading(intent, (), item_scoped(replace(c, party_size=None), base, items), summary, None, conflict, True,
+                       (), items, schedule)
+    return Reading(intent, terms, c, summary, reply, conflict, True, extras)
 
 
 def describe(reading: Reading) -> str:
@@ -180,7 +258,17 @@ def describe(reading: Reading) -> str:
         parts.append("restrições: " + ", ".join(restriction_label(r) for r in c.dietary))
     if c.preferences:
         parts.append("preferências: " + ", ".join(c.preferences))
+    if reading.groceries is not None:
+        parts = [f"lista: {list_text(reading.groceries) or 'vazia'}"]
+        if c.budget_cents is not None:
+            parts.append(f"até R$ {c.budget_cents // 100}")
+        if reading.schedule is not None:
+            from .grocery import describe_when
+            parts.append("agendar " + (describe_when(reading.schedule.when, reading.schedule.recurrence)
+                                       if reading.schedule.when else "(falta a data)"))
     head = {"order": "Pedido", "repeat": "Repetir último pedido", "confirm": "Cliente aceitou a sugestão",
             "chat": "Conversa"}[reading.intent]
+    if reading.groceries is not None and reading.intent == "order":
+        head = "Compra de mercado"
     origin = "" if reading.by_ai else " (por regras: IA indisponível)"
     return f"{head}{origin}: {reading.summary or ''} [{'; '.join(parts)}]".replace(":  [", ": [")

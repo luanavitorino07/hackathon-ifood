@@ -12,7 +12,7 @@ from typing import Any
 
 from ..models import slug
 from ..ports import RuntimeCall, RuntimeOutcome, ToolTrace
-from .catalog import DEMO_CATALOG
+from .catalog import DEMO_CATALOG, DEMO_GROCERY_CATALOG
 
 # Palavras genéricas não restringem a busca: "quero comida" deve ver o catálogo inteiro.
 _GENERIC = {"comida", "prato", "jantar", "janta", "almoco", "refeicao"}
@@ -70,6 +70,28 @@ def _simulated_reasoning(call: RuntimeCall) -> RuntimeOutcome:
                            "reason": "corresponde ao pedido (simulado)" if fit == "sim" else "outro prato (simulado)",
                            "atende_restricoes": [r for r in wanted if r in tags]})
         return RuntimeOutcome(ok=True, structured={"items": judged}, tool_calls=trace)
+    if call.agent_id == "grocery_basket":  # julga pelas palavras e acerta o pacote pelo tamanho pedido
+        wanted = {i.get("id"): i for i in _json_after("LISTA_JSON", call.prompt) or [] if isinstance(i, dict)}
+        restrictions = [r.get("id") for r in _json_after("RESTRICOES_JSON", call.prompt) or [] if isinstance(r, dict)]
+        judged = []
+        for p in _json_after("PRODUTOS_JSON", call.prompt) or []:
+            item = wanted.get(p.get("item_id")) or {}
+            words = [w for w in slug(item.get("item", "")).split("-") if len(w) >= 3]
+            name = slug(p.get("produto", ""))
+            first = name.split("-")[0] if name else ""
+            fit = ("sim" if words and all(w[:5] in name for w in words) and first[:4] == words[0][:4] else
+                   "parcial" if any(w[:5] in name for w in words) and first[:4] == words[0][:4] else "nao")
+            qty = item.get("quantidade") or 1
+            size = re.search(r"(\d+)", item.get("detalhe") or "")
+            pack = re.search(r"(?:^|-)(\d+)kg", name)
+            if size and pack:
+                qty = max(1, int(size.group(1)) // int(pack.group(1)))
+            tags = next((set(i["tags"]) for i in DEMO_GROCERY_CATALOG if i["product_id"] == p.get("product_id")), set())
+            violates = [r for r in restrictions if r == "lactose-free" and "leite" in name and r not in tags]
+            judged.append({"product_id": p.get("product_id", ""), "fit": fit, "quantidade": qty,
+                           "motivo": "corresponde ao item (simulado)" if fit == "sim" else "outro produto (simulado)",
+                           "viola_restricoes": violates, "atende_restricoes": []})
+        return RuntimeOutcome(ok=True, structured={"produtos": judged}, tool_calls=trace)
     if call.agent_id == "sales_strategist":
         options = _json_after("OPCOES_JSON", call.prompt) or []
         client = _json_after("CLIENTE_JSON", call.prompt) or {}
@@ -120,9 +142,16 @@ class DemoCatalogRuntime:
                                   detail=self.fail_detail)
         text = _customer_text(call.prompt)
         words = set(text.split("-"))
-        hits = [i for i in DEMO_CATALOG
-                if any(slug(k) in words or slug(k) in text for k in i["keywords"] if slug(k) not in _GENERIC)]
-        items = hits or DEMO_CATALOG
+        if call.context.get("merchant_type") == "GROCERIES":  # mercado: só o produto desejado, sem catálogo inteiro
+            product = re.search(r"Produto desejado:\s*([^.\n]*)", call.prompt)
+            wanted = set(slug(product.group(1) if product else "").split("-")) - {""}
+            items = [i for i in DEMO_GROCERY_CATALOG if wanted & {slug(k) for k in i["keywords"]}
+                     and call.context.get("merchant_id") in (None, i["merchant_id"])]
+            hits = items
+        else:
+            hits = [i for i in DEMO_CATALOG
+                    if any(slug(k) in words or slug(k) in text for k in i["keywords"] if slug(k) not in _GENERIC)]
+            items = hits or DEMO_CATALOG
         for f in call.context.get("dietary_filters") or []:
             tag = _FILTER_TAG.get(f)
             if tag:
