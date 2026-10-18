@@ -480,6 +480,46 @@ class AdminOverviewResponse(StrictModel):
     recent_sessions: list[RecentSession]
 
 
+class AiUsageClient(StrictModel):
+    """Custo de IA e vendas aceitas de um cliente. Custo em US$ informado pelo provedor (micro-dólares);
+    em R$, convertido pelo câmbio configurado. Lucro usa a margem suposta configurada (DEMO)."""
+
+    client_label: NonEmptyStr
+    sessions: NonNegativeInt
+    ai_calls: NonNegativeInt
+    input_tokens: NonNegativeInt
+    output_tokens: NonNegativeInt
+    cache_tokens: NonNegativeInt
+    ai_cost_usd_micros: NonNegativeInt
+    ai_cost_cents: NonNegativeInt
+    sales: NonNegativeInt
+    sales_cents: NonNegativeInt
+    ai_cost_share_bps: NonNegativeInt | None
+    estimated_profit_cents: int | None
+
+
+class AiUsageTotals(StrictModel):
+    sessions: NonNegativeInt
+    ai_calls: NonNegativeInt
+    input_tokens: NonNegativeInt
+    output_tokens: NonNegativeInt
+    cache_tokens: NonNegativeInt
+    ai_cost_usd_micros: NonNegativeInt
+    ai_cost_cents: NonNegativeInt
+    sales: NonNegativeInt
+    sales_cents: NonNegativeInt
+    ai_cost_share_bps: NonNegativeInt | None
+    estimated_profit_cents: int | None
+
+
+class AiUsageResponse(StrictModel):
+    schema_version: Literal[1] = 1
+    usd_brl_rate: Annotated[float, Field(gt=0)]
+    assumed_margin_bps: Annotated[int, Field(ge=0, le=10000)]
+    clients: list[AiUsageClient]
+    totals: AiUsageTotals
+
+
 class SubmitOrderRequest(StrictModel):
     session_id: NonEmptyStr
     recommendation_id: NonEmptyStr

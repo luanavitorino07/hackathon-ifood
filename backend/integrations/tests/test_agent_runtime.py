@@ -558,3 +558,30 @@ def test_runtime_ignores_unknown_vertical_and_malformed_store() -> None:
 
     assert "merchantType=RESTAURANT" in client.prompt_kwargs["prompt"]
     assert "merchantId" not in client.prompt_kwargs["prompt"]
+
+
+def test_usage_is_summed_from_opencode_messages() -> None:
+    from backend.integrations.opencode_client import usage_of
+
+    usage = usage_of([
+        {"role": "assistant", "cost": 0.0002, "tokens": {"input": 10, "output": 100, "reasoning": 5,
+                                                          "cache": {"read": 2000, "write": 400}}},
+        {"role": "assistant", "cost": 0.0001, "tokens": {"input": 4, "output": 50, "cache": {"read": 0, "write": 0}}},
+    ])
+    assert usage == {"input_tokens": 14, "output_tokens": 155, "cache_read_tokens": 2000,
+                     "cache_write_tokens": 400, "cost_usd": pytest.approx(0.0003)}
+    assert usage_of([{"role": "assistant"}]) is None
+
+
+def test_runtime_reports_usage_of_reasoning_call() -> None:
+    client = _ReasoningOpenCode(structured={"answer": "ok"})
+    client.last_usage = {"input_tokens": 14, "output_tokens": 183, "cache_read_tokens": 2451,
+                         "cache_write_tokens": 416, "cost_usd": 0.00016941}
+    runtime = OpenCodeAgentRuntime(OpenCodeSettings(), sandbox_location=SandboxLocation(-23.55, -46.63),
+                                   client_factory=lambda: client)
+
+    outcome = runtime.run(_reasoning_call())
+
+    assert outcome.ok is True
+    assert outcome.usage.output_tokens == 183
+    assert outcome.usage.cost_usd == pytest.approx(0.00016941)

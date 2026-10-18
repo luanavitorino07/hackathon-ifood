@@ -103,8 +103,9 @@ Os agentes não importam HTTP, OpenCode, MCP nem banco.
   - seletor de **clientes fictícios** (Ana, Bruno, Carla, Diego, ou sem histórico), enviado como
     `initial_context.name`.
 - **Análise financeira** (`services/executive.ts`): indicadores calculados a partir dos eventos reais de
-  cada atendimento (sem dado, o valor fica `null`) e **monitoria de estratégias**: quantas vezes cada
-  estratégia foi oferecida e aceita.
+  cada atendimento (sem dado, o valor fica `null`), **monitoria de estratégias** (quantas vezes cada
+  estratégia foi oferecida e aceita) e **custo de IA por cliente**: tokens, custo, valor vendido, % da
+  venda gasta com IA e lucro estimado (`/admin/ai-usage`).
 - **Conexão** (`services/api.ts`):
   - usa `/api/v1` na mesma origem e SSE com `react-native-sse`;
   - o comprador envia `X-Demo-Role: customer` e o gestor `X-Demo-Role: admin`, inclusive no SSE;
@@ -128,7 +129,8 @@ Os agentes não importam HTTP, OpenCode, MCP nem banco.
 | `GET /sessions/{id}/history` | Histórico paginado (`after_seq`, `limit` até 200), filtrado por audiência |
 | `GET /sessions/{id}/snapshot` | Estado completo: mensagens, recomendações, carrinho; agentes só para o gestor |
 | `GET /agents` | Catálogo de agentes (somente gestor) |
-| `GET /admin/overview` | Métricas agregadas, sem dados pessoais; o que não é medido vem `null` |
+| `GET /admin/overview` | Métricas agregadas, sem dados pessoais; o que não é medido vem `null`. `estimated_ai_cost_cents` vem do custo real de IA |
+| `GET /admin/ai-usage` | Somente gestor (adição ao contrato v1): custo de IA por cliente, vendas aceitas, % da venda gasta com IA e lucro estimado |
 | `POST /orders/submit` | **Não habilitado**: responde `503 ORDER_SUBMISSION_UNAVAILABLE` (não há ferramenta de pedido) |
 
 ### Regras do contrato v1 (resumo do `PROMPT.md` §15)
@@ -195,6 +197,18 @@ Outros comportamentos do runtime:
   A opção sai marcada como "somente para teste" e a API bloqueia o envio dela como pedido.
 - **Modelo:** o padrão do código é `google/gemini-3.8-flash`. A apresentação roda com
   `OPENCODE_PROVIDER_ID=anthropic` e `OPENCODE_MODEL_ID=claude-haiku-5-5`.
+
+### Custo de IA
+- Cada resposta do OpenCode traz `tokens` (entrada, saída, cache) e `cost` em US$, calculados por ele.
+- O cliente soma todas as mensagens do assistente de uma execução: a busca tem vários passos. Mesmo uma
+  chamada que falha devolve o consumo.
+- O runtime devolve isso em `RuntimeOutcome.usage`. Todo uso de runtime pelos agentes passa por
+  `MeteredRuntime`, que acumula por cliente.
+- O "fechado" soma o valor aceito. Conferido: o relatório bateu com o banco do OpenCode (US$ 0,005952 num
+  pedido real com 6 chamadas).
+- **Câmbio** (`APP_USD_BRL_RATE`, padrão 5,5) e **margem** (`APP_ASSUMED_MARGIN_BPS`, padrão 3000, a mesma
+  da política DEMO) são parâmetros configurados, não dados. A tela os mostra.
+- No modo demo o custo é zero: não há IA paga.
 
 ### Transcrição (`local_transcription.py`)
 - Ativada com `APP_STT_PROVIDER=whisper` (`APP_STT_MODEL=small`).
@@ -282,6 +296,7 @@ Mercado:  Intérprete → Pesquisador → Montador da cesta → Auditor → Desc
 | Do cliente | `SQLiteCustomerMemory` (`CustomerMemoryPort` + `StrategyOutcomePort`) | Pedidos feitos ao bot (prato, quantidade, orçamento, data), cadastro e resultado das estratégias. Sem nome, contato nem endereço | Em memória por processo |
 | Clientes fictícios | `demo_seed.py` | 4 personas com cadastro, histórico e estratégias, mais volume fictício para a monitoria (`APP_DEMO_CUSTOMERS=0` desliga) | Recriados a cada início |
 | Conhecimento comercial (RAG) | `MarkdownKnowledgeBase` (`KnowledgePort`) | `politica_comercial_demo.md` e `estrategias_venda_demo.md`, divididos por seção; busca por palavras com peso por raridade (idf) e tópicos, sem banco vetorial | Arquivos versionados |
+| Custo de IA | `UsageLedger` (`backend/agents/usage.py`) | Por cliente: chamadas, tokens, custo em US$ (informado pelo OpenCode) e vendas aceitas no chat | Em memória por processo |
 | Agendamentos | `InMemorySchedules` (`SchedulePort`) | Lista, mercado, data, recorrência e estado (pendente, ativo, concluído, cancelado) | Em memória por processo |
 
 - **Concorrência:** `save_patch` exige a revisão esperada. Se outra gravação veio antes, levanta

@@ -48,9 +48,12 @@ def build_orchestrator(runtime: AgentRuntimePort, memory: MemoryPort, sink: Even
                        registry: AgentRegistry | None = None,
                        knowledge: KnowledgePort | None | object = _DEFAULT,
                        customers: CustomerMemoryPort | None | object = _DEFAULT,
-                       schedules: SchedulePort | None | object = _DEFAULT, clock=None) -> Orchestrator:
-    """`schedules`: agendamentos de compra (padrão: memória do processo; None desliga). `clock`: relógio UTC."""
+                       schedules: SchedulePort | None | object = _DEFAULT, clock=None,
+                       usage=None) -> Orchestrator:
+    """`schedules`: agendamentos de compra (padrão: memória do processo; None desliga). `clock`: relógio UTC.
+    `usage`: livro de custo de IA por cliente (`usage.UsageLedger`; padrão: um por orquestrador)."""
     kb = default_knowledge() if knowledge is _DEFAULT else knowledge
     cm = default_customers() if customers is _DEFAULT else customers
     sc = InMemorySchedules() if schedules is _DEFAULT else schedules
-    return Orchestrator(registry or build_registry(), runtime, memory, sink, kb, cm, sc, clock)  # type: ignore[arg-type]
+    return Orchestrator(registry or build_registry(), runtime, memory, sink, kb, cm, sc, clock,  # type: ignore[arg-type]
+                        usage)

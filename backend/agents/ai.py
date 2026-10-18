@@ -45,7 +45,12 @@ def ask(ctx: AgentContext, agent_id: str, system: str, prompt: str, schema: dict
     reason = {"quota": "cota da IA esgotada", "timeout": "IA demorou demais", "unavailable": "IA indisponível",
               "invalid_output": "resposta da IA fora do formato"}.get(outcome.error or "",
                                                                       "resposta da IA fora do formato")
+    spent = ""
+    if outcome.usage is not None:  # consumo informado pelo provedor, visível só ao gestor
+        u = outcome.usage
+        tokens = u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens
+        spent = f" · {tokens:,} tokens · US$ {u.cost_usd:.5f}".replace(",", ".")
     ctx.events.tool_activity(agent_id, f"ai_{ctx.task_id}", "raciocinio_ia", provider,
                              "succeeded" if ok else "failed", None,
-                             "IA consultada" if ok else f"{reason}; regra de reserva usada")
+                             ("IA consultada" if ok else f"{reason}; regra de reserva usada") + spent)
     return outcome.structured if ok else None  # type: ignore[return-value]

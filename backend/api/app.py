@@ -21,6 +21,7 @@ from .errors import APIError
 from .models import (
     AdminOverviewResponse,
     AgentCatalogResponse,
+    AiUsageResponse,
     ChatAcceptedResponse,
     ChatMessageRequest,
     EventType,
@@ -70,6 +71,7 @@ def create_app(
     transcription_provider: TranscriptionProvider | None = None,
     memory: Any | None = None,
     session_mode: Mode = Mode.DEMO,
+    usage_report: Any | None = None,
 ) -> FastAPI:
     common_error_responses = {
         status: {"model": HTTPErrorResponse} for status in (400, 401, 403, 404, 409, 422, 429, 503)
@@ -87,6 +89,7 @@ def create_app(
     app.state.transcription_provider = transcription_provider
     app.state.memory = memory
     app.state.session_mode = Mode(session_mode)
+    app.state.usage_report = usage_report
 
     @app.middleware("http")
     async def persist_local_demo_admin(request: Request, call_next: Any) -> Any:
@@ -330,7 +333,24 @@ def create_app(
 
     @app.get("/api/v1/admin/overview", response_model=AdminOverviewResponse)
     async def admin_overview(request: Request) -> AdminOverviewResponse:
-        return await _state(request).overview(await _identity(request))
+        identity = await _identity(request)
+        overview = await _state(request).overview(identity)
+        report = await _usage_report(request, identity)
+        if report is None:
+            return overview
+        metrics = overview.metrics.model_copy(
+            update={"estimated_ai_cost_cents": report["totals"]["ai_cost_cents"]})
+        return overview.model_copy(update={"metrics": metrics})
+
+    @app.get("/api/v1/admin/ai-usage", response_model=AiUsageResponse)
+    async def admin_ai_usage(request: Request) -> AiUsageResponse:
+        identity = await _identity(request)
+        if identity.role != "admin":
+            raise APIError(403, "FORBIDDEN", "Credencial de gestor necessária.")
+        report = await _usage_report(request, identity)
+        if report is None:
+            raise APIError(503, "AI_USAGE_UNAVAILABLE", "Consumo de IA indisponível.", retryable=False)
+        return AiUsageResponse.model_validate(report)
 
     @app.post(
         "/api/v1/orders/submit",
@@ -474,6 +494,13 @@ async def _dispatch_message(
                 "retryable": False,
             },
         )
+
+
+async def _usage_report(request: Request, identity: RequestIdentity) -> dict[str, Any] | None:
+    provider = request.app.state.usage_report
+    if provider is None or identity.role != "admin":
+        return None
+    return await provider.report(identity.tenant_id)
 
 
 def _state(request: Request) -> InMemoryBackendState:

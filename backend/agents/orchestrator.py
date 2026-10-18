@@ -23,6 +23,7 @@ from .failures import classify_failure
 from .resumption import reusable_offers, signature
 from .registry import Agent, AgentContext, AgentDefinition, AgentRegistry
 from .scheduler import SCHEDULE_NOTE, plan_schedule
+from .usage import MeteredRuntime, UsageLedger
 from .strategist import STRATEGIES
 
 REPLY_SYSTEM = ("Você é o atendente simpático de um chatbot de comida. Reescreva a RESPOSTA_BASE de forma natural "
@@ -54,7 +55,9 @@ class Orchestrator:
     def __init__(self, registry: AgentRegistry, runtime: AgentRuntimePort,
                  memory: MemoryPort, sink: EventSink, knowledge: KnowledgePort | None = None,
                  customers: CustomerMemoryPort | None = None, schedules: SchedulePort | None = None,
-                 clock: Callable[[], datetime] | None = None) -> None:
+                 clock: Callable[[], datetime] | None = None, usage: UsageLedger | None = None) -> None:
+        self._usage = usage or UsageLedger()
+        runtime = MeteredRuntime(runtime, self._usage)  # todo consumo de IA dos agentes é contabilizado
         self._registry, self._runtime, self._memory, self._sink = registry, runtime, memory, sink
         self._knowledge, self._customers, self._schedules = knowledge, customers, schedules
         self._clock = clock or (lambda: datetime.now(timezone.utc))
@@ -67,6 +70,7 @@ class Orchestrator:
     def handle_message(self, session: SessionContext) -> AgentsOutput:
         events = EventEmitter(self._sink, session.session_id)
         self._current = session
+        self._bind_usage(session)
         now = self._clock()
         if self._schedules is not None and wants_schedule_list(session.message_text):
             return self._list_schedules(session, events)
@@ -265,6 +269,16 @@ class Orchestrator:
         return self._ask(events, f"Pronto, cancelei a compra agendada de {self._schedule_line(target)}. "
                                  "Quer agendar outra ou pedir alguma coisa agora?")
 
+    def usage_report(self, tenant_id: str) -> dict[str, Any]:
+        """Custo de IA por cliente e vendas aceitas (Análise financeira do gestor)."""
+        return self._usage.report(tenant_id)
+
+    def _bind_usage(self, session: SessionContext) -> None:
+        name = (session.initial_context or {}).get("name")
+        label = name if isinstance(name, str) and name.strip() else (
+            "Cliente sem cadastro" if session.client_id else "Atendimento anônimo")
+        self._usage.bind(session.session_id, session.tenant_id, self._client_key(session), label)
+
     def scheduled(self, schedule_id: str) -> ScheduledPurchase | None:
         """Agendamento pelo id (a API usa para saber a sessão e o cliente antes de rodar)."""
         return self._schedules.get(schedule_id) if self._schedules is not None else None
@@ -293,6 +307,7 @@ class Orchestrator:
         session = SessionContext(p.session_id, p.tenant_id, p.client_id, p.mode,
                                  "Compra agendada: " + list_text(items), initial_context=p.initial_context)
         self._current = session
+        self._bind_usage(session)
         events = EventEmitter(self._sink, session.session_id)
         stored = self._memory.load(session.session_id).state
         saved = Constraints.from_dict(stored.get("constraints"))
@@ -321,14 +336,15 @@ class Orchestrator:
         if self._schedules is None or "when" not in plan:
             return None
         sid = new_id("sched")
-        location = (session.initial_context or {}).get("location")
+        context = {k: v for k, v in (session.initial_context or {}).items()
+                   if k in ("location", "name") and v}  # o nome identifica o cliente fictício na memória
         self._schedules.save(ScheduledPurchase(
             schedule_id=sid, tenant_id=session.tenant_id, session_id=session.session_id,
             client_id=session.client_id, client_key=self._client_key(session), mode=session.mode,
             items=tuple(i.to_dict() for i in state.shopping_list), budget_cents=state.constraints.budget_cents,
             merchant_id=best["merchant_id"], merchant_name=best["merchant_name"], next_run_at=plan["when"],
             recurrence=plan["recurrence"], status="pending_confirmation",
-            initial_context={"location": location} if location else None, last_total_cents=best["total_cents"]))
+            initial_context=context or None, last_total_cents=best["total_cents"]))
         return sid
 
     def _basket_text(self, rec: dict[str, Any], state: WorkingState) -> str:
@@ -464,6 +480,7 @@ class Orchestrator:
         if scheduled is not None and scheduled.status == "pending_confirmation":
             return self._confirm_schedule(session, events, constraints, scheduled)
         strategy = shown.get("strategy")
+        self._usage.add_sale(session.session_id, shown.get("total_cents"))  # venda aceita no chat
         key = self._client_key(session)
         if self._customers is not None and key and hasattr(self._customers, "record_acceptance"):
             strategy = self._customers.record_acceptance(session.tenant_id, key, session.session_id) or strategy
