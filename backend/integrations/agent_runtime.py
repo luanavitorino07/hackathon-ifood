@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -218,7 +219,7 @@ class OpenCodeAgentRuntime:
             _raise_mcp_error(payload)
             only_open = not self._include_closed_for_testing
             _validate_tool_input(part, location=location, dietary=dietary, only_open=only_open)
-            intent.validate_query(part["state"]["input"]["query"])
+            query = str(part["state"]["input"]["query"]).strip()
             offers, mismatches = select_matching_offers(
                 _map_offers(
                     payload,
@@ -258,6 +259,7 @@ class OpenCodeAgentRuntime:
                         if mismatches
                         else ""
                     )
+                    + f' Query interpretada pela IA: "{query}".'
                 ),
             )
             return _ExecutionResult(
@@ -301,7 +303,7 @@ class OpenCodeAgentRuntime:
                 session_id,
                 agent=self._settings.reasoning_agent,
                 system=call.system,
-                prompt=call.prompt,
+                prompt=_reasoning_prompt(call),
                 tools={"*": False, "StructuredOutput": True},
                 output_schema=call.output_schema,
                 timeout_seconds=call.timeout_s,
@@ -447,7 +449,7 @@ def _build_search_prompt(
     *,
     only_open: bool = True,
 ) -> str:
-    required_terms = sorted(SearchIntent.from_prompt(agent_prompt).terms)
+    customer_text = SearchIntent.from_prompt(agent_prompt).customer_text
     dietary_instruction = (
         f"Use refinements.itemRestrictions={json.dumps(list(dietary))}. "
         if dietary
@@ -459,12 +461,30 @@ def _build_search_prompt(
         f"userLocation={json.dumps(dict(location), ensure_ascii=False)}. "
         f"{dietary_instruction}"
         f"Use refinements.onlyOpen={'true' if only_open else 'false'}. "
-        "Preserve o prato na query, sem pessoas/orçamento; não troque por ingrediente ou sabor. "
-        f"Termos obrigatórios: {json.dumps(required_terms)}. "
+        "Interprete semanticamente o pedido original e escolha uma query curta contendo somente "
+        "o prato ou a categoria principal. Quantidade, orçamento, adjetivos e ingredientes "
+        "desejados, "
+        "molhos, acompanhamentos, personalização e preferência de entrega são critérios do pedido, "
+        "não termos obrigatórios da query. Não copie a frase inteira e não use uma extração "
+        "anterior "
+        "de palavras como fonte de verdade. "
         "Sem outras tools, inferência de endereço ou personalização não confirmada. "
-        "Após a ferramenta responda só OK. Pedido:\n"
-        f"{agent_prompt}"
+        "Após a ferramenta responda só OK. Pedido original do cliente:\n"
+        f"{customer_text}"
     )
+
+
+def _reasoning_prompt(call: _RuntimeCallLike) -> str:
+    """Remove pré-interpretações lexicais quando a IA deve ler o pedido original.
+
+    O Curador já recebe ``Pedido do cliente`` e os itens comprovados pelo MCP. A
+    linha ``PRATO_JSON`` é produzida por uma heurística anterior e pode conter
+    orçamento, adjetivos e acompanhamentos como se fossem o nome do prato.
+    """
+
+    if call.agent_id != "curator":
+        return call.prompt
+    return re.sub(r"(?m)^PRATO_JSON:\s*.*(?:\n|$)", "", call.prompt)
 
 
 def _completed_tool_part(

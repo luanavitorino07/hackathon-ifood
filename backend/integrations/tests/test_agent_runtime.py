@@ -162,6 +162,25 @@ def test_runtime_executes_structured_reasoning_without_tools() -> None:
     assert client.closed is True
 
 
+def test_curator_reads_original_request_without_lexical_preinterpretation() -> None:
+    client = _ReasoningOpenCode({"answer": "ok"})
+    runtime = OpenCodeAgentRuntime(OpenCodeSettings(), client_factory=lambda: client)
+    call = _reasoning_call()
+    call.prompt = (
+        "Pedido do cliente: pizza grande para 3 com bebida até 120 reais\n"
+        'PRATO_JSON: ["chat", "pizza", "grande", "bebida", "120"]\n'
+        'ITENS_JSON: [{"product_id":"pizza_1","item":"Pizza grande"}]'
+    )
+
+    result = asyncio.run(runtime._execute(call))
+
+    assert result.ok is True
+    sent_prompt = client.prompt_kwargs["prompt"]
+    assert "Pedido do cliente: pizza grande para 3 com bebida até 120 reais" in sent_prompt
+    assert "ITENS_JSON" in sent_prompt
+    assert "PRATO_JSON" not in sent_prompt
+
+
 def test_runtime_rejects_invalid_structured_reasoning_output() -> None:
     client = _ReasoningOpenCode(None)
     runtime = OpenCodeAgentRuntime(OpenCodeSettings(), client_factory=lambda: client)
@@ -278,6 +297,7 @@ def test_runtime_maps_raw_mcp_output_and_ignores_model_structured_output() -> No
     }
     assert result.traces[0].provider == "ifood_mcp"
     assert result.traces[0].status == "succeeded"
+    assert 'Query interpretada pela IA: "pizza".' in result.traces[0].summary
     assert result.detail == "sandbox_location_used"
     assert "Localização de sandbox utilizada" in result.traces[0].summary
     assert client.prompt_kwargs["tools"] == {

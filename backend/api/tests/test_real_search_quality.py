@@ -491,7 +491,7 @@ def test_http_preserves_verified_delivery_and_catalog_details():
     asyncio.run(scenario())
 
 
-def test_query_substitution_is_rejected_without_automatic_retry():
+def test_ai_selected_query_is_not_overridden_by_legacy_product_terms():
     mock = MockSearchClient("strogonoff de frango", [item("Strogonoff de frango", "x", "m", 20)])
     runtime = OpenCodeAgentRuntime(
         OpenCodeSettings(),
@@ -512,10 +512,60 @@ def test_query_substitution_is_rejected_without_automatic_retry():
             allowed_tools=("offer_search",),
         )
     )
-    assert outcome.ok is False
-    assert outcome.detail == "invalid_query"
+    assert outcome.ok is True
     assert len(mock.calls) == 1
-    assert outcome.tool_calls == ()
+    search_prompt = mock.calls[0]["prompt"]
+    assert "Pedido original do cliente:\nQuero parmegiana de frango" in search_prompt
+    assert "Produto desejado" not in search_prompt
+    assert "Termos obrigatórios" not in search_prompt
+    assert outcome.tool_calls[0].provider == "ifood_mcp"
+
+
+def test_ai_interprets_full_hamburger_request_without_literal_word_query():
+    request = (
+        "eu quero um hamburguer com bastante carne, molho num preco legal, "
+        "perto de 40 reais, se tiver batata legal e o mais perto possivel"
+    )
+    mock = MockSearchClient(
+        "hamburguer",
+        [item("Hambúrguer duplo com batata", "burger_1", "merchant_1", 35.9)],
+    )
+    runtime = OpenCodeAgentRuntime(
+        OpenCodeSettings(),
+        sandbox_location=SandboxLocation(-23.55, -46.63),
+        client_factory=lambda: mock,
+    )
+    app = build_application(runtime=runtime, runtime_mode="real")
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://test"
+        ) as client:
+            session_id = (
+                await client.post("/api/v1/sessions", json={"client_id": None})
+            ).json()["session_id"]
+            await client.post(
+                "/api/v1/chat/messages",
+                json={
+                    "session_id": session_id,
+                    "client_message_id": "semantic_search",
+                    "text": request,
+                    "input_mode": "text",
+                    "transcription_id": None,
+                },
+            )
+            snapshot = (
+                await client.get(f"/api/v1/sessions/{session_id}/snapshot")
+            ).json()
+
+        assert snapshot["recommendations"]
+        assert len(mock.calls) == 1
+        search_prompt = mock.calls[0]["prompt"]
+        assert f"Pedido original do cliente:\n{request}" in search_prompt
+        assert "Produto desejado" not in search_prompt
+        assert "Termos obrigatórios" not in search_prompt
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize(
@@ -601,7 +651,8 @@ def test_cheaper_after_expired_search_uses_remembered_product_not_word_algo():
             assert snapshot["recommendations"]
             assert snapshot["recommendations"][0]["items"][0]["unit_price_cents"] == 1500
             assert len(mock.calls) == 2
-            assert "Produto desejado: pizza." in mock.calls[-1]["prompt"]
+            assert "Pedido original do cliente:\ntem algo mais barato?" in mock.calls[-1]["prompt"]
+            assert "Produto desejado" not in mock.calls[-1]["prompt"]
 
     asyncio.run(scenario())
 

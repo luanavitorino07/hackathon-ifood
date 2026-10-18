@@ -17,18 +17,8 @@ from typing import Any
 
 from .errors import InvalidOutputError
 
-_SPELLINGS = {
-    "parmigiana": "parmegiana",
-    "hamburger": "hamburguer",
-    "burger": "hamburguer",
-    "burguer": "hamburguer",
-    "hamburgueres": "hamburguer",
-}
 _MODIFICATIONS = re.compile(
     r"\b(?:sem|extra|adicional|adicionais|retirar|tirar|adicionar|acrescentar)\b"
-)
-_BASE_MODIFICATION = re.compile(
-    r"\b(?:sem|extra|adicional|adicionais|retirar|tirar|adicionar|acrescentar)\b[^,;.]*"
 )
 
 AVAILABILITY_UNKNOWN = "Loja aberta e disponibilidade de entrega ainda não confirmadas."
@@ -53,14 +43,9 @@ def normalized_text(value: str) -> str:
     return unicodedata.normalize("NFKD", value.lower()).encode("ascii", "ignore").decode()
 
 
-def _tokens(value: str) -> set[str]:
-    return {_SPELLINGS.get(t, t) for t in re.findall(r"[a-z]+", normalized_text(value))}
-
-
 @dataclass(frozen=True)
 class SearchIntent:
     customer_text: str
-    terms: frozenset[str]
     customization_requested: bool
 
     @classmethod
@@ -70,23 +55,10 @@ class SearchIntent:
         if not text:
             raise InvalidOutputError("invalid_query", retryable=False)
         plain = normalized_text(text)
-        # O pesquisador é dono da extração do prato. Não reinterpretar a conversa
-        # com uma segunda lista de stopwords divergente da dos agentes.
-        product = re.search(r"(?m)^Produto desejado:\s*([^.\n]+)", prompt)
-        terms = _tokens(product.group(1)) if product else set()
-        # Compatibilidade com o pesquisador anterior ao PR #8: ele ainda inclui
-        # ingredientes a retirar nos termos. Não os exigir no nome do item base.
-        modifications = " ".join(m.group(0) for m in _BASE_MODIFICATION.finditer(plain))
-        terms -= _tokens(modifications)
-        return cls(text, frozenset(terms), bool(_MODIFICATIONS.search(plain)))
-
-    def validate_query(self, query: str) -> None:
-        if not self.terms.issubset(_tokens(query)):
-            # Detalhe já reconhecido pelos agentes; não mascara como falha OAuth.
-            raise InvalidOutputError("invalid_query", retryable=False)
-
-    def matches(self, name: str) -> bool:
-        return self.terms.issubset(_tokens(name))
+        # A IA de busca interpreta o pedido original. Linhas auxiliares como
+        # ``Produto desejado`` podem vir de regras antigas dos agentes e não são
+        # promovidas a uma segunda interpretação obrigatória nesta integração.
+        return cls(text, bool(_MODIFICATIONS.search(plain)))
 
 
 def select_matching_offers(
@@ -95,9 +67,9 @@ def select_matching_offers(
 ) -> tuple[list[dict[str, Any]], int]:
     """Deduplica e alterna o catálogo antes do julgamento do Curador.
 
-    A query continua protegida por ``SearchIntent.validate_query``. Os itens não
-    são descartados por nome aqui: o Curador julga relevância e, se a IA falhar,
-    o filtro determinístico dos agentes continua sendo a reserva.
+    Os itens não são descartados por nome aqui: a IA de busca escolhe a query e o
+    Curador julga os resultados. A integração só valida o contrato e a evidência
+    da ferramenta, sem tentar reinterpretar semanticamente o pedido.
     """
     del intent
     groups: dict[str, deque] = {}
