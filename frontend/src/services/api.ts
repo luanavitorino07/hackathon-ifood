@@ -2,9 +2,9 @@ import { Platform } from "react-native";
 import EventSource from "react-native-sse";
 import type * as T from "../types/api";
 import * as mock from "../mocks/server";
-export const mocked = process.env.EXPO_PUBLIC_USE_MOCKS !== "false";
+export const mocked = process.env.EXPO_PUBLIC_USE_MOCKS === "true";
 const base =
-  process.env.EXPO_PUBLIC_API_URL ||
+  process.env.EXPO_PUBLIC_API_URL?.trim() ||
   (Platform.OS === "web" ? "/api/v1" : "http://localhost:8000/api/v1");
 const path = (id: string) => "/sessions/" + encodeURIComponent(id);
 export class ApiError extends Error {
@@ -17,13 +17,13 @@ export class ApiError extends Error {
 }
 export function api(admin = false) {
   const headers: Record<string, string> =
-    admin && process.env.EXPO_PUBLIC_DEMO_ADMIN !== "false"
-      ? { "X-Demo-Role": "admin" }
+    process.env.EXPO_PUBLIC_DEMO_ADMIN !== "false"
+      ? { "X-Demo-Role": admin ? "admin" : "customer" }
       : {};
-  async function request<R>(url: string, body?: unknown): Promise<R> {
+  async function request<R>(url: string, body?: unknown, timeout = 20000): Promise<R> {
     const form = body instanceof FormData;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
+    const timer = setTimeout(() => controller.abort(), timeout);
     try {
       const response = await fetch(base + url, {
         method: body === undefined ? "GET" : "POST",
@@ -100,7 +100,7 @@ export function api(admin = false) {
         form.append("audio", blob, name);
       } else form.append("audio", { uri, name, type: mime } as unknown as Blob);
       form.append("language", "pt-BR");
-      return request("/audio/transcriptions", form);
+      return request("/audio/transcriptions", form, 180000);
     },
     subscribe: (
       id: string,

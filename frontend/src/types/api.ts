@@ -1,4 +1,5 @@
-// Gerado dos DTOs Pydantic do backend; dinheiro em centavos.
+// Alinhado aos DTOs Pydantic; novos metadados opcionais aceitam fixtures v1 antigas.
+// Dinheiro em centavos; null significa dado não disponível.
 export type ActorKind = "system" | "agent" | "customer" | "tool";
 export type Actor = { kind: ActorKind; id: string };
 export type AgentDefinition = {
@@ -28,6 +29,8 @@ export type CartItem = {
   name: string;
   quantity: number;
   unit_price_cents: number;
+  original_unit_price_cents?: number | null;
+  image_url?: string | null;
 };
 export type Recommendation = {
   recommendation_id: string;
@@ -41,6 +44,10 @@ export type Recommendation = {
   discount_cents: number;
   total_cents: number | null;
   eta_minutes: number | null;
+  eta_min_minutes?: number | null;
+  distance_km?: number | null;
+  merchant_rating?: number | null;
+  is_open?: boolean | null;
   reasons: string[];
   warnings: string[];
   data_origin: "ifood_mcp" | "demo";

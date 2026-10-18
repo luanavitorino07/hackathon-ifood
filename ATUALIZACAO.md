@@ -1,6 +1,86 @@
 # Atualização do projeto — 18/10/2026
 
+## INTEGRAÇÃO MAIS RECENTE — frontend + áudio + main (18/10/2026)
+
+**Este bloco substitui o estado anterior de “frontend não integrado” e “áudio só local”.**
+Gabriel autorizou integrar `origin/front-end@87a429c`, `feat/audio-stt@d998d79` e o backend
+atual à main, preservando o design. Integração preparada na branch `integration/frontend-audio`.
+
+### O que a entrega integra
+
+- Interface Expo/React Native recebida da equipe: chatbot, dashboard, painel dos agentes
+  e conflitos. API real é o padrão; simulação exige `EXPO_PUBLIC_USE_MOCKS=true`.
+- Proxy same-origin em **http://localhost:8080** → frontend 8081 / API 8000. API usa
+  OpenCode 4096 e Gemini/iFood reais. Executar o frontend por 8080, não 8081.
+- Microfone do navegador e seletor de arquivo → Whisper small local → texto editável →
+  confirmação/envio. O frontend preenche `input_mode` e `transcription_id`, sem copiar JSON.
+  Áudio não usa Gemini; a recomendação posterior usa o fluxo de agentes normal.
+- Memória operacional, `initial_context` opcional pela API, recomendações, mensagens,
+  histórico, eventos SSE, decisões, consultas RAG/memória, conflitos e métricas conectados.
+  Não foi criado formulário visual de perfil nem inventada integração de identidade iFood.
+- Sessão recuperada na mesma aba após refresh; ID perdido por reinício da API abre nova
+  sessão. Botão “Novo atendimento”; indicador de processamento/transcrição e reenvio
+  idempotente. Snapshot atualizado também durante recuperação de histórico.
+- Corrigido conflito entre o cookie administrativo e o chatbot no mesmo navegador:
+  comprador envia `X-Demo-Role: customer`, inclusive no SSE, e não herda papel de gestor.
+  Gestor local exige `--local-demo-admin`; isso continua sendo autenticação de demo local.
+- Tipos TS alinhados aos metadados atuais de recomendações. Loja fechada tem aviso e não
+  permite revisar/submeter pedido. Revisão de loja disponível informa que envio real ainda
+  não está implementado; botão real desabilitado. Nenhum checkout/pagamento foi inventado.
+- Arquivos `.pyc` acidentais da branch frontend foram retirados do índice; caches locais
+  preservados, com `.gitignore` para não voltarem aos commits.
+
+### Verificação realizada nesta integração
+
+- **289 testes Python passaram, 3 opt-in reais ignorados na suíte offline**; smoke test
+  de fixtures/contrato frontend-backend passou; TypeScript sem erros; 4 testes TS passaram;
+  `expo export --platform web` gerou bundle/HTML/fontes com sucesso.
+- Teste separado **HTTP real pelo proxy da interface (8080)**: catálogo de 8 agentes,
+  cookie gestor, comprador sem permissão administrativa, áudio de fala sintética em
+  português transcrito pelo Whisper real, sessão e mensagem com `input_mode: audio`.
+  Texto revisado no teste acrescentou orçamento de R$ 1000 antes de enviar.
+- Busca iFood real incluindo lojas fechadas → Curador, Planejador, Auditor, consulta de
+  memória/RAG, Estrategista e resposta do Orquestrador. **44,3 segundos do envio à resposta**,
+  uma recomendação `ifood_mcp`, nenhuma ocorrência de erro e eventos de sucesso de IA para
+  `curator`, `sales_strategist` e `orchestrator`. Quatro chamadas esperadas ao modelo no fluxo;
+  não repetimos a busca para testar reenvio.
+- Resultado: opção alternativa Combo 2 Pizzas da Just Pizza, R$ 98,99; a resposta informou
+  correspondência parcial, loja fechada/somente teste e taxa de serviço não incluída.
+  Isso valida transporte/colaboração, não acerto semântico universal ou disponibilidade real.
+- **SSE real pelo proxy:** comprador recebeu 4 eventos, gestor 36; nenhum `visibility: admin`
+  no stream do comprador, comunicações `agent_message` presentes no gestor. Reenvio do mesmo
+  ID não duplicou mensagem; recuperação de histórico respeitou `after_seq`.
+- Não houve automação visual de navegador: ferramenta de navegador não estava disponível.
+  HTML/bundle, HTTP, SSE e transcrição foram testados; aparência final, permissão real do
+  microfone e interação humana no navegador precisam de conferência da equipe.
+
+### Rodar / limites para o pitch
+
+Ver `frontend/README.md` e `backend/integrations/AUDIO.md`. No ambiente Python com as
+dependências de áudio e ffmpeg instalados, iniciar OpenCode na raiz do projeto e a API:
+
+```sh
+opencode serve --hostname 127.0.0.1 --port 4096
+# Em outro terminal, com o ambiente Python correto ativado:
+APP_STT_PROVIDER=whisper APP_STT_MODEL=small python -m backend.api.run_local --real --local-demo-admin --include-closed-restaurants
+# Em outros dois terminais, dentro de frontend/:
+npm ci
+npm run web
+npm run proxy
+```
+
+O flag de lojas fechadas é somente para o ensaio fora de horário; removê-lo para pesquisar
+apenas lojas abertas. Nunca implica autorização para compra. Não iniciar duplicatas nas
+mesmas portas se os serviços já estiverem rodando. A cota Gemini continua limitada.
+
+RAG comercial permanece DEMO; memória de cliente entre reinícios foi adiada por Gabriel;
+autenticação de produção e envio real de pedido/pagamento seguem pendentes. A documentação
+antiga de `feat/memory` ainda precisa ser reconciliada; não mesclar suas versões antigas de
+schemas sobre os atuais. O restante deste arquivo é histórico do trabalho anterior.
+
 ## ESTADO ATUAL — leia esta seção antes de qualquer relatório histórico
+
+> Fotografia anterior à integração do frontend. Para o estado vigente, usar o bloco acima.
 
 **Atualizado pelo Codex local a pedido de Gabriel. Este bloco substitui diagnósticos,
 prioridades e pendências antigas que conflitem com ele. O histórico abaixo foi mantido

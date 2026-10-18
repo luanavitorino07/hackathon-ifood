@@ -146,6 +146,7 @@ export function Offer({
             {offer.data_origin === "demo"
               ? "Demonstração"
               : "iFood"}
+            {offer.is_open === false ? " · Fechado — somente teste" : ""}
           </Text>
         </View>
       </View>
@@ -184,7 +185,7 @@ export function Offer({
         <Button
           title="Revisar pedido"
           onPress={onSelect}
-          disabled={offer.total_cents === null}
+          disabled={offer.total_cents === null || offer.is_open === false}
         />
       )}
     </Card>

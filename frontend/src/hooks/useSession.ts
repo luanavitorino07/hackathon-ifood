@@ -44,6 +44,9 @@ export function useSession(id: string | null, admin = false) {
           cursor = Math.max(cursor, r.last_seq);
           more = r.has_more;
         }
+        // Some session status changes are projections, not separate SSE events.
+        const fresh = await client.snapshot(id!);
+        if (alive) setSnapshot((old) => !old || fresh.last_seq >= old.last_seq ? fresh : old);
         if (alive) setError("");
       } catch (e) {
         if (alive) setError(String(e));

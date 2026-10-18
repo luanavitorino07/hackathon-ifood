@@ -14,7 +14,8 @@ from backend.api import models as m
 for event in json.loads((ROOT / 'frontend/src/mocks/events.json').read_text()):
     m.OfficeEvent.model_validate(event)
 m.AgentCatalogResponse.model_validate_json((ROOT / 'frontend/src/mocks/agents.json').read_text())
-with TestClient(build_application(runtime_mode='demo')) as client:
+with TestClient(build_application(runtime_mode='demo', memory_backend='ephemeral')) as client:
+    client.headers['X-Demo-Role'] = 'customer'
     admin = {'X-Demo-Role': 'admin'}
     assert client.get('/api/v1/agents').status_code == 403
     catalog = client.get('/api/v1/agents', headers=admin)
