@@ -6,6 +6,39 @@
 prioridades e pendências antigas que conflitem com ele. O histórico abaixo foi mantido
 para rastreabilidade, não como lista de tarefas atuais.**
 
+### Auditoria geral das branches e interfaces — resumo
+
+Foram auditadas as seis branches remotas disponíveis (`main`, `feat/agents`,
+`feat/frontend-ceo`, `feat/integrations`, `feat/memory` e `front-end`), incluindo
+backend, agentes, memória, integrações, testes, documentação e as duas versões da
+interface. A auditoria encontrou **26 pontos**, dos quais quatro são prioritários:
+
+- o estado compartilhado do Orquestrador pode misturar cliente, tenant e mensagem de
+  atendimentos executados ao mesmo tempo;
+- restrições escritas no chat, como “sem glúten”, “vegana” e alergia a amendoim, não
+  são extraídas corretamente e podem produzir recomendações inadequadas;
+- a resposta final gerada pela IA não valida itens, quantidades e alegações alimentares
+  contra a recomendação aprovada;
+- quantidades arbitrariamente grandes são aceitas e podem provocar consumo excessivo
+  de CPU e memória durante o planejamento.
+
+Também foram encontrados crescimento sem retenção de sessões, eventos e locks; ausência
+de medição confiável de tokens e custo; interpretação incorreta de valores como
+`R$ 1.000,00`; recomendações antigas mantidas após mudança incompatível do pedido;
+confirmação demo anunciada pela interface, mas indisponível na API; e cálculos incorretos
+no painel financeiro da branch `feat/frontend-ceo`.
+
+Validação executada: a `main` teve **288 testes Python aprovados, 1 falha causada pela
+ausência de ffmpeg e 3 pulados**. As duas interfaces passaram na checagem TypeScript e
+na exportação web. A falha de ffmpeg é um problema de portabilidade do teste, não prova
+de falha no reconhecimento de voz. A auditoria não alterou código, não realizou compra
+e não consumiu Gemini ou iFood reais.
+
+Ordem recomendada: corrigir primeiro o isolamento entre sessões, as restrições
+alimentares, a validação factual da resposta e os limites de entrada; depois alinhar a
+submissão demo, invalidar recomendações antigas, corrigir métricas do painel e implantar
+retenção e telemetria de tokens.
+
 ### Lorenzo / Codex: o bloqueio antigo da “pizza da esfiharia” foi corrigido
 
 O diagnóstico de `e2f03b6` dizia que o Curador não conseguia chamar a IA e caía no
