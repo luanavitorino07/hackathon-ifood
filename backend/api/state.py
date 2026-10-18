@@ -303,6 +303,19 @@ class InMemoryBackendState:
         async with self._condition:
             return self._require_access_locked(session_id, identity).client_id
 
+    async def set_session_status(
+        self,
+        session_id: str,
+        identity: RequestIdentity,
+        status: SessionStatus | str,
+    ) -> None:
+        resolved = SessionStatus(status).value
+        async with self._condition:
+            record = self._require_access_locked(session_id, identity)
+            record.status = resolved
+            record.updated_at = _utcnow()
+            self._condition.notify_all()
+
     def _require_access_locked(
         self, session_id: str, identity: RequestIdentity
     ) -> _SessionRecord:
