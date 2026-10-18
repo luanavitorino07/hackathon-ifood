@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, SessionContext, WorkingState,
-                     slug, soft_unverified, tag_requirements)
+                     filtered_mark, slug, soft_unverified, tag_requirements)
 from .registry import AgentContext, AgentDefinition
 
 
@@ -43,11 +43,13 @@ def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
         issues.append("Não é mais barata que a opção anterior")
     unverified = soft_unverified(c, st.offers)
     veg = [by_id[i["product_id"]].tags for i in items if i["product_id"] in by_id]
-    if "vegetarian" not in unverified:
-        if VEGETARIAN_ALL in c.dietary and not all("vegetarian" in t for t in veg):
-            issues.append("Contém item não vegetariano")
-        if VEGETARIAN_OPTION in c.dietary and not any("vegetarian" in t for t in veg):
-            issues.append("Sem opção vegetariana")
+    proven = "vegetarian" not in unverified
+    ok_veg = (lambda t: "vegetarian" in t) if proven else \
+        (lambda t: "vegetarian" in t or filtered_mark("VEGETARIAN") in t)
+    if VEGETARIAN_ALL in c.dietary and not all(ok_veg(t) for t in veg):
+        issues.append("Contém item não vegetariano")
+    if VEGETARIAN_OPTION in c.dietary and not any(ok_veg(t) for t in veg):
+        issues.append("Sem opção vegetariana")
     for r in unverified:  # restrição branda sem tag: só passa se a proposta avisar o cliente
         if not any(f"'{r}' não comprovada" in w for w in rec["warnings"]):
             issues.append(f"Restrição '{r}' não comprovada sem aviso ao cliente")

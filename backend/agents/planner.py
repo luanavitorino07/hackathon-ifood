@@ -6,14 +6,16 @@ from typing import Any
 
 from .events import new_id
 from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, Constraints, Offer,
-                     SessionContext, WorkingState, slug, soft_unverified, tag_requirements)
+                     SessionContext, WorkingState, filtered_mark, slug, soft_unverified,
+                     tag_requirements)
 from .registry import AgentContext, AgentDefinition
 
 MAX_RECOMMENDATIONS = 3
 
 
-def is_vegetarian(offer: Offer) -> bool:
-    return "vegetarian" in offer.tags
+def is_vegetarian(offer: Offer, proven: bool = True) -> bool:
+    """Com prova (tag), exige a tag; sem prova, aceita item vindo da busca filtrada do iFood."""
+    return "vegetarian" in offer.tags or (not proven and filtered_mark("VEGETARIAN") in offer.tags)
 
 
 def has_tags(offer: Offer, required: tuple[str, ...]) -> bool:
@@ -25,18 +27,21 @@ def _pick(pool: list[Offer], units: int, c: Constraints, premium: bool, required
           veg_enforced: bool) -> list[tuple[Offer, int]] | None:
     """Escolhe `units` itens de um restaurante. None se as restrições não puderem ser atendidas."""
     eligible = [o for o in pool if has_tags(o, required)
-                and not (veg_enforced and VEGETARIAN_ALL in c.dietary and not is_vegetarian(o))]
+                and not (VEGETARIAN_ALL in c.dietary and not is_vegetarian(o, veg_enforced))]
     if not eligible:
         return None
     ordered = sorted(eligible, key=lambda o: (o.unit_price_cents, o.product_id), reverse=premium)
     chosen: list[Offer] = []
-    if veg_enforced and VEGETARIAN_OPTION in c.dietary and VEGETARIAN_ALL not in c.dietary:
-        veg = [o for o in ordered if is_vegetarian(o)]
+    if VEGETARIAN_OPTION in c.dietary and VEGETARIAN_ALL not in c.dietary:
+        veg = [o for o in ordered if is_vegetarian(o, veg_enforced)]
         if not veg:
             return None
         chosen.append(veg[0])
+    # econômica: completa com o item mais barato; a outra opção varia os itens (rodízio).
+    fill = 0
     while len(chosen) < max(units, 1):
-        chosen.append(ordered[len(chosen) % len(ordered)])
+        chosen.append(ordered[fill % len(ordered)] if premium else ordered[0])
+        fill += 1
     counts: dict[str, int] = defaultdict(int)
     by_id = {o.product_id: o for o in chosen}
     for o in chosen:

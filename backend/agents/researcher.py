@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models import AgentResult, Offer, SessionContext, WorkingState, dietary_filters
+from dataclasses import replace
+
+from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, Offer, SessionContext,
+                     WorkingState, dietary_filters, filtered_mark)
 from .ports import RuntimeCall, RuntimeOutcome
 from .registry import AgentContext, AgentDefinition
 
@@ -96,21 +99,31 @@ class Researcher:
     def should_activate(self, session: SessionContext, state: WorkingState) -> bool:
         return not state.offers
 
-    def run(self, ctx: AgentContext) -> AgentResult:
-        c = ctx.state.constraints
-        prompt = (f"Pedido do cliente: {ctx.session.message_text}\n"
-                  f"Orçamento (centavos): {c.budget_cents}; pessoas: {c.party_size}; "
-                  f"restrições: {list(c.dietary)}; preferências: {list(c.preferences)}.")
+    def _search(self, ctx: AgentContext, prompt: str, filters: list[str]) -> tuple[RuntimeOutcome, list[Offer], int]:
+        context = _tool_context(ctx.session, ctx.state)
+        context.pop("dietary_filters", None)
+        if filters:
+            context["dietary_filters"] = filters
         outcome = ctx.runtime.run(RuntimeCall(
             agent_id="researcher", task_id=ctx.task_id, session_id=ctx.session.session_id,
             system=SYSTEM, prompt=prompt, output_schema=OFFER_SCHEMA,
-            allowed_tools=("offer_search",), max_tool_calls=3,
-            context=_tool_context(ctx.session, ctx.state)))
+            allowed_tools=("offer_search",), max_tool_calls=3, context=context))
         for t in outcome.tool_calls:
             ctx.events.tool_activity("researcher", t.call_id, t.tool_name, t.provider,
                                      "started", None, f"Iniciando {t.tool_name}")
             ctx.events.tool_activity("researcher", t.call_id, t.tool_name, t.provider,
                                      t.status, t.duration_ms, t.summary)
+        offers, dropped = parse_offers(outcome.structured) if outcome.ok else ([], 0)
+        marks = tuple(filtered_mark(f) for f in filters)  # registra o filtro pedido; não é prova
+        return outcome, [replace(o, tags=o.tags + marks) for o in offers], dropped
+
+    def run(self, ctx: AgentContext) -> AgentResult:
+        c = ctx.state.constraints
+        prompt = (f"Pedido do cliente: {ctx.session.message_text}\n"
+                  f"Orçamento (centavos): {c.budget_cents}; pessoas: {c.party_size}; "
+                  f"restrições: {list(c.dietary)}; preferências: {list(c.preferences)}.")
+        base_filters = dietary_filters(c)
+        outcome, offers, dropped = self._search(ctx, prompt, base_filters)
         if not outcome.ok:
             return AgentResult("researcher", "error", {"error": outcome.error, "detail": outcome.detail,
                                                 "retry_after_s": outcome.retry_after_s},
@@ -121,9 +134,20 @@ class Researcher:
             return AgentResult("researcher", "error", {"error": "unverified_origin"},
                                "Sessão real sem chamada MCP comprovada; resultado descartado.",
                                limitations=["origem não verificada"])
-        offers, dropped = parse_offers(outcome.structured)
-        ctx.state.offers, ctx.state.data_origin = offers, origin  # type: ignore[assignment]
         limitations = [f"{dropped} oferta(s) inválida(s) descartada(s)"] if dropped else []
+        if VEGETARIAN_OPTION in c.dietary and VEGETARIAN_ALL not in c.dietary:
+            # "uma opção vegetariana": busca extra com filtro só para escolher esse item.
+            veg_outcome, veg_offers, _ = self._search(ctx, prompt, sorted(set(base_filters) | {"VEGETARIAN"}))
+            if veg_outcome.ok and origin_of(veg_outcome) == origin:
+                by_id = {o.product_id: o for o in offers}
+                for o in veg_offers:
+                    known = by_id.get(o.product_id)
+                    by_id[o.product_id] = replace(known, tags=tuple(dict.fromkeys(known.tags + o.tags))) \
+                        if known else o
+                offers = list(by_id.values())
+            else:
+                limitations.append("busca vegetariana adicional indisponível")
+        ctx.state.offers, ctx.state.data_origin = offers, origin  # type: ignore[assignment]
         if not offers:
             return AgentResult("researcher", "needs_info", {"offers": 0},
                                "Nenhuma oferta válida encontrada.", "low", limitations,

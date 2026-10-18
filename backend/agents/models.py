@@ -31,6 +31,13 @@ def slug(text: str) -> str:
 SOFT_FILTERS = {"vegetarian": "VEGETARIAN", "vegan": "VEGAN", "gluten-free": "GLUTEN_FREE"}
 
 
+FILTERED_PREFIX = "filtered:"  # tag interna: item veio de uma busca com esse filtro (NÃO é prova)
+
+
+def filtered_mark(filter_name: str) -> str:
+    return FILTERED_PREFIX + filter_name
+
+
 def _soft_key(restriction: str) -> str:
     return "vegetarian" if restriction in SPECIAL_RESTRICTIONS else restriction
 
@@ -43,8 +50,13 @@ def soft_unverified(constraints: "Constraints", offers: "list[Offer] | tuple[Off
 
 
 def dietary_filters(constraints: "Constraints") -> list[str]:
-    """Filtros de busca (nomes do MCP) para as restrições brandas."""
-    return sorted({SOFT_FILTERS[_soft_key(d)] for d in constraints.dietary if _soft_key(d) in SOFT_FILTERS})
+    """Filtros de busca (nomes do MCP) para as restrições brandas.
+
+    "Uma opção vegetariana" NÃO filtra a busca inteira (todos os itens viriam vegetarianos);
+    o planejador garante ao menos um item vegetariano.
+    """
+    return sorted({SOFT_FILTERS[_soft_key(d)] for d in constraints.dietary
+                   if d != VEGETARIAN_OPTION and _soft_key(d) in SOFT_FILTERS})
 
 
 def tag_requirements(constraints: "Constraints", offers: "list[Offer] | tuple[Offer, ...]" = ()) -> tuple[str, ...]:

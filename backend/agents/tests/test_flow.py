@@ -152,6 +152,37 @@ class ConstraintsTest(unittest.TestCase):
         self.assertIn("não comprovada", out.reply_text)
         self.assertEqual(rec["total_cents"], 2 * 2000 + 500)
 
+    def test_one_vegetarian_option_does_not_filter_whole_search(self):
+        runtime = FakeRuntime()
+        orch, ctx, _, _ = make("quero comida para 4 pessoas até R$ 120, com uma opção vegetariana", runtime)
+        orch.handle_message(ctx)
+        self.assertNotIn("dietary_filters", runtime.calls[0].context)
+
+    def test_one_vegetarian_option_without_tags_uses_item_from_filtered_search(self):
+        from backend.agents.demo.runtime import DemoCatalogRuntime
+        runtime = DemoCatalogRuntime(with_tags=False)
+        orch, ctx, _, _ = make("quero comida pra 4 pessoas até R$ 120, com uma opção vegetariana", runtime)
+        out = orch.handle_message(ctx)
+        self.assertEqual([c.context.get("dietary_filters") for c in runtime.calls], [None, ["VEGETARIAN"]])
+        names = [i["name"] for i in out.recommendations[0]["items"]]
+        self.assertIn("Escondidinho de Mandioca e Legumes", names)
+        self.assertTrue(any("não comprovada" in w for w in out.recommendations[0]["warnings"]))
+
+    def test_all_vegetarian_makes_a_single_filtered_search(self):
+        runtime = FakeRuntime()
+        orch, ctx, _, _ = make("quero comida vegetariana para 2 pessoas até R$ 100", runtime)
+        orch.handle_message(ctx)
+        self.assertEqual([c.context.get("dietary_filters") for c in runtime.calls], [["VEGETARIAN"]])
+
+    def test_economy_option_is_really_the_cheapest_combination(self):
+        offers = [{"product_id": p, "name": p, "unit_price_cents": c, "merchant_id": "m", "merchant_name": "M",
+                   "tags": t, "delivery_fee_cents": 0, "other_fees_cents": 0, "eta_minutes": 30}
+                  for p, c, t in (("pf", 2790, []), ("veg", 3190, ["vegetarian"]), ("caro", 3690, []))]
+        orch, ctx, _, _ = make("quero comida para 4 pessoas até R$ 120, com uma opção vegetariana",
+                               FakeRuntime(offers=offers))
+        recs = orch.handle_message(ctx).recommendations
+        self.assertEqual(recs[0]["total_cents"], 3190 + 3 * 2790)
+
     def test_gluten_and_vegan_become_search_filters(self):
         runtime = FakeRuntime()
         orch, ctx, _, memory = make("Quero para 2 pessoas até R$ 100", runtime)

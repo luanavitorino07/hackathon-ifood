@@ -54,6 +54,14 @@ class DemoConversationTest(unittest.TestCase):
                          initial_context={"restrictions": ["vegetariana"], "preferences": []})
         self.assertIn("não comprovada", buf.getvalue())
 
+    def test_main_prompt_scenario_works_in_both_modes(self):
+        for tags in (True, False):
+            buf = io.StringIO()
+            run_conversation(["quero comida pra 4 pessoas até R$ 120, com uma opção vegetariana"],
+                             out=buf, with_tags=tags)
+            self.assertIn("Escondidinho de Mandioca e Legumes", buf.getvalue(), tags)
+            self.assertIn("R$ 115,60", buf.getvalue(), tags)
+
     def test_failure_mode_is_honest(self):
         buf = io.StringIO()
         run_conversation(["quero pizza"], out=buf, fail="quota")

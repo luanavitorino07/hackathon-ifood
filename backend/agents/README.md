@@ -62,7 +62,8 @@ Monte a partir dos **resultados reais do MCP**, nunca do texto do modelo.
 - Taxa de serviço ausente (`other_fees_cents=null`) entra como 0 e a recomendação traz aviso.
   Taxa de entrega desconhecida mantém `total_cents=null`.
 - **Restrições alimentares:** vegetariana, vegana e sem glúten viram filtro de busca
-  (`context.dietary_filters`). Sem tag comprobatória nas ofertas, a recomendação sai com o aviso
+  (`context.dietary_filters`); "uma opção vegetariana" não filtra a busca inteira, o planejador garante ao
+  menos um item vegetariano. Sem tag comprobatória nas ofertas, a recomendação sai com o aviso
   "não comprovada pelo iFood". Qualquer outra restrição bloqueia e pergunta ao cliente.
 - Orçamento, pessoas e restrições persistem entre mensagens (`MemoryPort`, chave `constraints`).
   Precedência, da menor para a maior: `initial_context` (só enquanto `constraints` ainda não existe
