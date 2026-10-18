@@ -3,6 +3,49 @@
 > Leia antes de continuar. Este arquivo resume o estado da `main` após o merge do PR #2
 > (`b6b7dbe`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 
+## Resposta do Claude — retomada incremental e relevância (18/10/2026)
+
+### 1. Retomada incremental — FEITA, PR #7 aberto (aguardando merge)
+
+Tarefa abaixo ("Tarefa para Claude / Gabriel"). Commit `ebfe14c` em `feat/agents`, PR #7.
+
+- **Arquivos:** `backend/agents/resumption.py` (novo), `orchestrator.py`, `README.md`,
+  `tests/test_resumption.py` (novo). Nada em API/integrations.
+- **Como funciona:** assinatura da busca = prato (`search.terms`), restrições alimentares, localização do
+  `initial_context` e modo. Se a assinatura bate e a pesquisa tem até 10 min (`SEARCH_TTL_S`), o
+  orquestrador reidrata `candidates` e replaneja **sem chamar o runtime**. Nova busca quando prato,
+  restrição, localização ou modo mudam; validade vencida; pedido explícito ("busca de novo", "outras
+  opções"); pesquisa anterior falhou ou veio vazia; sessão `real` com dados não `ifood_mcp`.
+  `last_search = {signature, at, count}` só é gravado após pesquisa bem-sucedida. O gestor vê o
+  `agent_message` "Pesquisa reaproveitada, sem nova busca".
+- **Testes (offline):** agentes 97 OK (16 novos: quantidade, orçamento, os dois em sequência, "mais
+  barato", restrições mantidas, troca de prato/filtro/localização, atualização explícita, validade
+  vencida, sessões isoladas, falha e vazio não reaproveitados, modo real). Memória 17 OK.
+- **`test_related_followup_should_reuse_existing_candidates` agora passa** nas duas memórias: com a marca
+  dá `XPASS(strict)`; sem a marca, API/integrations = **74 passed, 1 skipped**.
+- **→ Codex/Lorenzo:** depois do merge do PR #7, retirar o `@pytest.mark.xfail(strict=True, ...)` desse
+  teste em `backend/api/tests/test_message_continuity.py` (3 linhas). Até lá a suíte da API acusa 2
+  falhas por XPASS — é o sinal de que a correção funcionou, não regressão.
+- Não feito (fora do pedido): encerramento explícito de atendimento e seleção/explicação de proposta.
+
+### 2. Recomendação fora do pedido — CORRIGIDA, PR #6 mergeado (`52e737c`)
+
+Teste real em São Carlos: "marmita parmegiana pra 2 pessoas por 100 conto, busque melhor preço" →
+Gemini buscou `"marmita parmegiana 2 pessoas"` com `sort: PRICE`; o iFood devolveu tortas, milkshake e
+marmitas de frango de restaurante **fechado**; os agentes sugeriram **2 Tortas do McDonald's**.
+
+- Agora o prato é extraído e lembrado entre mensagens, a busca recebe só "Produto desejado: <prato>"
+  (sem pessoas/orçamento, relevância em vez de só preço), o planejador usa só ofertas aderentes (avisa
+  "opção mais próxima"; sem nenhuma, pergunta ao cliente) e o auditor rejeita item sem relação.
+- **→ Lorenzo (`backend/integrations`):** o `OFFER_SCHEMA` ganhou o campo opcional **`is_open`**; mapear
+  `merchant.isOpen` → `is_open` em `_map_offers`. Com ele, os agentes já excluem e o auditor bloqueia
+  restaurante fechado. Complementa o pedido de `onlyOpen` logo abaixo.
+
+### 3. Limpeza do worktree extra — não é possível daqui
+
+`hackathon-ifood-agents-integration` existe na máquina do Lorenzo, não na do Gabriel. Quem tiver acesso
+deve conferir e remover (`git worktree remove <pasta>` no repositório dele), se não houver nada local.
+
 ## Para Lorenzo — restaurantes fechados podem ser recomendados (Claude, 18/10/2026)
 
 Conferido no código da `main` (`8a89ee2`): **a busca real não filtra restaurantes abertos.**
@@ -69,7 +112,7 @@ de pessoas ou orçamento. Priorizar esta retomada; não confundir com reenvio HT
   comprovar que o reaproveitamento não devolve ofertas incompatíveis ou vencidas.
 - Todos os testes com `FakeRuntime`/catálogo simulado: **nenhuma chamada Gemini ou iFood**.
 - Publicar aqui a resposta do Claude com arquivos alterados, testes e commit/PR.
-  Este registro é encaminhamento; não significa que o Claude já iniciou ou concluiu.
+  **Status (Claude, 18/10): implementado — ver "Resposta do Claude" no topo (PR #7).**
 
 ## Novo: módulo de memória implementado (PR #3, `52f0c93`)
 
