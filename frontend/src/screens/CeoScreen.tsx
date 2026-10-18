@@ -5,13 +5,14 @@ import { computeExecutive, type SessionHistory } from "../services/executive";
 import { BarList, Card, Pill, StatCard } from "../components/ui";
 import { BrandGradient, Icon } from "../components/Brand";
 import { colors, money, percent, relativeTime, styles as s } from "../theme";
-import type { AdminOverviewResponse, AgentDefinition, OfficeEvent } from "../types/api";
+import type { AdminOverviewResponse, AgentDefinition, AiUsageResponse, OfficeEvent } from "../types/api";
 
 const client = api(true);
 const REFRESH_MS = 6000;
 
 function useExecutiveData() {
   const [overview, setOverview] = useState<AdminOverviewResponse | null>(null);
+  const [usage, setUsage] = useState<AiUsageResponse | null>(null);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
   const [histories, setHistories] = useState<SessionHistory[]>([]);
   const [error, setError] = useState("");
@@ -25,7 +26,7 @@ function useExecutiveData() {
       if (busy) return;
       busy = true;
       try {
-        const [next, catalog] = await Promise.all([client.overview(), client.catalog()]);
+        const [next, catalog, cost] = await Promise.all([client.overview(), client.catalog(), client.aiUsage()]);
         const sessions = next.recent_sessions.filter((r) => r.last_seq > 1);
         const loaded = await Promise.all(
           sessions.map(async (r) => {
@@ -45,6 +46,7 @@ function useExecutiveData() {
         );
         if (!alive) return;
         setOverview(next);
+        setUsage(cost);
         setAgents(catalog.agents);
         setHistories(
           loaded.map(({ r, events }) => ({
@@ -70,7 +72,50 @@ function useExecutiveData() {
       clearInterval(timer);
     };
   }, []);
-  return { overview, agents, histories, error, updatedAt };
+  return { overview, usage, agents, histories, error, updatedAt };
+}
+
+const bps = (v: number | null) => (v == null ? "—" : `${(v / 100).toFixed(1).replace(".", ",")}%`);
+const usd = (micros: number) => `US$ ${(micros / 1_000_000).toFixed(4)}`;
+const tokens = (n: number) => n.toLocaleString("pt-BR");
+
+function AiCostCard({ usage }: { usage: AiUsageResponse | null }) {
+  if (!usage) return null;
+  const t = usage.totals;
+  return (
+    <Card
+      title="Custo de IA por cliente"
+      right={<Pill text={`${bps(t.ai_cost_share_bps)} da venda vai para IA`} tone={t.ai_cost_share_bps == null ? "gray" : "green"} />}
+    >
+      <Text style={s.muted}>
+        Tokens e custo de cada chamada de IA e busca informados pelo provedor (OpenCode), divididos pelo valor que o
+        cliente aceitou no chat. Câmbio configurado: US$ 1 = R$ {usage.usd_brl_rate.toFixed(2).replace(".", ",")}.
+        Lucro estimado usa a margem suposta de {bps(usage.assumed_margin_bps)} (hipótese DEMO) menos o custo de IA.
+      </Text>
+      <View style={s.row}>
+        <StatCard icon="bolt" label="Custo total de IA" value={money(t.ai_cost_cents)} hint={`${usd(t.ai_cost_usd_micros)} · ${tokens(t.input_tokens + t.output_tokens + t.cache_tokens)} tokens`} />
+        <StatCard icon="money" label="Vendido (aceito no chat)" value={money(t.sales_cents)} hint={`${t.sales} venda(s)`} tone="blue" />
+        <StatCard icon="trophy" label="Lucro estimado" value={money(t.estimated_profit_cents)} hint="margem DEMO − custo de IA" tone="green" />
+      </View>
+      {usage.clients.length === 0 && <Text style={s.empty}>Aparece depois do primeiro atendimento.</Text>}
+      {usage.clients.map((c) => (
+        <View key={c.client_label} style={{ flexDirection: "row", flexWrap: "wrap", gap: 12, paddingVertical: 8, borderBottomWidth: 1, borderColor: colors.line }}>
+          <View style={{ flex: 1, minWidth: 160, gap: 2 }}>
+            <Text style={[s.text, { fontSize: 15, fontFamily: "InterSemiBold" }]}>{c.client_label}</Text>
+            <Text style={[s.muted, { fontSize: 13 }]}>
+              {c.sessions} atendimento(s) · {c.ai_calls} chamada(s) · {tokens(c.input_tokens + c.output_tokens + c.cache_tokens)} tokens
+            </Text>
+          </View>
+          <View style={{ alignItems: "flex-end", gap: 2 }}>
+            <Text style={[s.text, { fontSize: 15 }]}>IA {money(c.ai_cost_cents)} · vendido {money(c.sales_cents)}</Text>
+            <Text style={[s.muted, { fontSize: 13 }]}>
+              {bps(c.ai_cost_share_bps)} da venda · lucro {money(c.estimated_profit_cents)}
+            </Text>
+          </View>
+        </View>
+      ))}
+    </Card>
+  );
 }
 
 function seconds(ms: number | null) {
@@ -120,7 +165,7 @@ function Col({ children, flex = 1 }: { children: React.ReactNode; flex?: number 
 export function CeoScreen() {
   const width = useWindowDimensions().width;
   const wide = width >= 1100;
-  const { overview, agents, histories, error, updatedAt } = useExecutiveData();
+  const { overview, usage, agents, histories, error, updatedAt } = useExecutiveData();
   const name = (id: string) => agents.find((a) => a.agent_id === id)?.name ?? id;
   const x = useMemo(() => computeExecutive(histories, name), [histories, agents]);
   const sessions = overview?.metrics.sessions_started ?? x.sessions;
@@ -220,6 +265,8 @@ export function CeoScreen() {
           </Card>
         </Col>
       </Row>
+
+      <AiCostCard usage={usage} />
 
       <Card
         title="Monitoria de estratégias de venda"

@@ -81,6 +81,7 @@ def build_application(
         agent_catalog=services.catalog,
         memory=services.memory,
         session_mode=mode,
+        usage_report=services.usage,
         identity_resolver=(
             identity_resolver
             if identity_resolver is not None

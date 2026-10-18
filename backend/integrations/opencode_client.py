@@ -35,6 +35,7 @@ class OpenCodeRunResult:
     message_id: str | None
     structured_output: Any
     raw_response: dict[str, Any]
+    usage: dict[str, float] | None = None  # tokens e custo (US$) informados pelo OpenCode
 
 
 class OpenCodeClient:
@@ -47,6 +48,7 @@ class OpenCodeClient:
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.settings = settings
+        self.last_usage: dict[str, float] | None = None  # consumo da última execução, mesmo se ela falhar
         self._owns_client = client is None
         auth = None
         if settings.password:
@@ -150,6 +152,7 @@ class OpenCodeClient:
         info = data.get("info")
         if not isinstance(info, Mapping):
             raise InvalidOutputError("resposta de mensagem inválida do OpenCode")
+        self.last_usage = usage_of([info])
         error = info.get("error")
         if isinstance(error, Mapping):
             self._raise_model_error(error)
@@ -167,6 +170,12 @@ class OpenCodeClient:
                 raise InvalidOutputError("histórico de execução inválido do OpenCode")
             tool_parts = []
             seen = set()
+            # cada passo da execução é uma mensagem do assistente com o próprio consumo
+            self.last_usage = usage_of([
+                m.get("info", {}) for m in messages
+                if isinstance(m, Mapping) and m.get("info", {}).get("role") == "assistant"
+                and m.get("info", {}).get("parentID") == parent_id
+            ]) or self.last_usage
             for message in messages:
                 message_info = message.get("info", {})
                 if (
@@ -194,6 +203,7 @@ class OpenCodeClient:
             message_id=message_id,
             structured_output=_structured_output(info, data.get("parts", [])),
             raw_response=data,
+            usage=self.last_usage,
         )
 
     async def abort_session(self, session_id: str) -> bool:
@@ -356,3 +366,26 @@ def _structured_output(info: Mapping[str, Any], parts: Any) -> Any:
             if isinstance(metadata, Mapping) and metadata.get("valid") is True:
                 return state.get("input")
     return None
+
+
+def usage_of(infos: list[Mapping[str, Any]]) -> dict[str, float] | None:
+    """Soma tokens e custo (US$) das mensagens do assistente; None se o OpenCode não informou."""
+    total = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0,
+             "cost_usd": 0.0}
+    seen = False
+    for info in infos:
+        tokens = info.get("tokens") if isinstance(info, Mapping) else None
+        cost = info.get("cost") if isinstance(info, Mapping) else None
+        if not isinstance(tokens, Mapping) and not isinstance(cost, (int, float)):
+            continue
+        seen = True
+        tokens = tokens if isinstance(tokens, Mapping) else {}
+        cache = tokens.get("cache") if isinstance(tokens.get("cache"), Mapping) else {}
+        for key, value in (("input_tokens", tokens.get("input")),
+                           ("output_tokens", (tokens.get("output") or 0) + (tokens.get("reasoning") or 0)),
+                           ("cache_read_tokens", cache.get("read")), ("cache_write_tokens", cache.get("write"))):
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+                total[key] += int(value)
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0:
+            total["cost_usd"] += float(cost)
+    return total if seen else None

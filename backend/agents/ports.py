@@ -37,6 +37,17 @@ class ToolTrace:
     summary: str  # sem payload sensível
 
 
+@dataclass(frozen=True)
+class Usage:
+    """Consumo de IA de uma chamada, como o provedor informou (o custo vem calculado pelo OpenCode)."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    cost_usd: float = 0.0
+
+
 RuntimeError_ = Literal["quota", "timeout", "invalid_output", "unavailable"]
 
 
@@ -48,6 +59,7 @@ class RuntimeOutcome:
     error: RuntimeError_ | None = None
     retry_after_s: int | None = None
     detail: str | None = None  # motivo curto e sanitizado, só para diagnóstico controlado
+    usage: Usage | None = None  # tokens/custo informados pelo provedor; None = desconhecido (ex.: demo)
 
 
 @runtime_checkable
@@ -180,7 +192,7 @@ class ScheduledPurchase:
     next_run_at: str  # ISO 8601 UTC
     recurrence: Literal["none", "weekly", "biweekly", "monthly"]
     status: Literal["pending_confirmation", "active", "done", "cancelled"]
-    initial_context: dict[str, Any] | None = None  # localização para a busca do dia (não vai para eventos)
+    initial_context: dict[str, Any] | None = None  # localização e nome do cliente fictício (não vão para eventos)
     last_total_cents: int | None = None
 
 

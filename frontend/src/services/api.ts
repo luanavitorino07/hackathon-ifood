@@ -65,6 +65,8 @@ export function api(admin = false) {
       mocked
         ? Promise.resolve(mock.mockOverview())
         : request("/admin/overview"),
+    aiUsage: (): Promise<T.AiUsageResponse | null> =>
+      mocked ? Promise.resolve(null) : request<T.AiUsageResponse>("/admin/ai-usage").catch(() => null),
     snapshot: (id: string): Promise<T.SessionSnapshotResponse> =>
       mocked
         ? Promise.resolve(mock.mockSnapshot(id, admin))

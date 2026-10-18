@@ -334,10 +334,22 @@ class OrchestratorAgentCatalog:
         return [AgentDefinition.model_validate(item) for item in raw]
 
 
+class OrchestratorUsageReport:
+    """Custo de IA por cliente, calculado pelos agentes a partir do consumo informado pelo provedor."""
+
+    def __init__(self, orchestrator: Any) -> None:
+        self._orchestrator = orchestrator
+
+    async def report(self, tenant_id: str) -> dict[str, Any] | None:
+        report = getattr(self._orchestrator, "usage_report", None)
+        return await asyncio.to_thread(report, tenant_id) if report is not None else None
+
+
 @dataclass(frozen=True, slots=True)
 class AgentServiceBundle:
     dispatcher: OrchestratorDispatcher
     catalog: OrchestratorAgentCatalog
+    usage: OrchestratorUsageReport
     event_sink: StateEventSink
     orchestrator: Any
     memory: Any
@@ -356,6 +368,7 @@ def build_agent_services(*, runtime: Any, memory: Any, state: Any) -> AgentServi
             event_sink,
         ),
         catalog=OrchestratorAgentCatalog(orchestrator),
+        usage=OrchestratorUsageReport(orchestrator),
         event_sink=event_sink,
         orchestrator=orchestrator,
         memory=memory,

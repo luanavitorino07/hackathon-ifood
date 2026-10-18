@@ -220,6 +220,7 @@ def test_openapi_contains_all_public_v1_routes_and_payload_schemas() -> None:
         "/api/v1/sessions/{session_id}/snapshot",
         "/api/v1/sessions/{session_id}/history",
         "/api/v1/admin/overview",
+        "/api/v1/admin/ai-usage",  # adição: custo de IA por cliente (somente gestor)
         "/api/v1/orders/submit",
         "/api/v1/sessions/{session_id}/events",
     }
@@ -262,5 +263,28 @@ def test_admin_catalog_and_overview_require_admin_identity() -> None:
             assert catalog.json()["agents"][0]["capabilities"] == ["offer_search"]
             assert overview.status_code == 200
             assert set(overview.json()["window"]) == {"from", "to"}
+
+    asyncio.run(scenario())
+
+
+def test_ai_usage_is_admin_only_and_fills_overview_cost() -> None:
+    import asyncio
+    import httpx
+
+    from backend.api.main import build_application
+
+    app = build_application(runtime_mode="demo", memory_backend="ephemeral")
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+            denied = await client.get("/api/v1/admin/ai-usage", headers={"X-Demo-Role": "customer"})
+            assert denied.status_code == 403
+            report = await client.get("/api/v1/admin/ai-usage", headers={"X-Demo-Role": "admin"})
+            assert report.status_code == 200
+            body = report.json()
+            assert body["usd_brl_rate"] > 0 and body["assumed_margin_bps"] == 3000
+            assert body["totals"]["ai_cost_cents"] == 0  # demo não consome IA paga
+            overview = await client.get("/api/v1/admin/overview", headers={"X-Demo-Role": "admin"})
+            assert overview.json()["metrics"]["estimated_ai_cost_cents"] == 0
 
     asyncio.run(scenario())

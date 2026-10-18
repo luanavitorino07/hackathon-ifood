@@ -256,6 +256,26 @@ export type AdminOverviewResponse = {
   metrics: OverviewMetrics;
   recent_sessions: RecentSession[];
 };
+export type AiUsageNumbers = {
+  sessions: number;
+  ai_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_tokens: number;
+  ai_cost_usd_micros: number;
+  ai_cost_cents: number;
+  sales: number;
+  sales_cents: number;
+  ai_cost_share_bps: number | null;
+  estimated_profit_cents: number | null;
+};
+export type AiUsageResponse = {
+  schema_version: 1;
+  usd_brl_rate: number;
+  assumed_margin_bps: number;
+  clients: (AiUsageNumbers & { client_label: string })[];
+  totals: AiUsageNumbers;
+};
 export type SubmitOrderRequest = {
   session_id: string;
   recommendation_id: string;

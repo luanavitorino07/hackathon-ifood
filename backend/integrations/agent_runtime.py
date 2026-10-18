@@ -148,8 +148,10 @@ class OpenCodeAgentRuntime:
     def run(self, call: _RuntimeCallLike) -> Any:
         """Executa a chamada síncrona exigida por ``AgentRuntimePort``."""
 
-        result = asyncio.run(self._execute(call))
+        clients: list[Any] = []
+        result = asyncio.run(self._execute(call, clients))
         ports = import_module("backend.agents.ports")
+        usage = _sum_usage(getattr(client, "last_usage", None) for client in clients)
         traces = tuple(
             ports.ToolTrace(
                 trace.call_id,
@@ -168,13 +170,14 @@ class OpenCodeAgentRuntime:
             error=result.error,
             retry_after_s=result.retry_after_s,
             detail=result.detail,
+            usage=ports.Usage(**usage) if usage is not None else None,
         )
 
-    async def _execute(self, call: _RuntimeCallLike) -> _ExecutionResult:
+    async def _execute(self, call: _RuntimeCallLike, clients: list[Any] | None = None) -> _ExecutionResult:
         if monotonic() < self._quota_until:
             return _failure("quota", "quota_exceeded", retry_after_s=30)
         if not call.allowed_tools and call.max_tool_calls == 0:
-            return await self._execute_reasoning(call)
+            return await self._execute_reasoning(call, clients)
         if _LOGICAL_TOOL not in call.allowed_tools:
             return _failure("invalid_output", "tool_not_allowed")
         if call.max_tool_calls < 1:
@@ -191,6 +194,8 @@ class OpenCodeAgentRuntime:
         dietary = _read_dietary_filters(call.context)
         merchant_type, merchant_id = _read_scope(call.context)
         client = self._client_factory()
+        if clients is not None:
+            clients.append(client)
         started_at = monotonic()
         session_id = None
         try:
@@ -292,10 +297,12 @@ class OpenCodeAgentRuntime:
         finally:
             await client.aclose()
 
-    async def _execute_reasoning(self, call: _RuntimeCallLike) -> _ExecutionResult:
+    async def _execute_reasoning(self, call: _RuntimeCallLike, clients: list[Any] | None = None) -> _ExecutionResult:
         """Raciocínio sem MCP: só a ferramenta interna de serialização do JSON."""
 
         client = self._client_factory()
+        if clients is not None:
+            clients.append(client)
         session_id = None
         try:
             session_id = await client.create_session(
@@ -332,6 +339,17 @@ class OpenCodeAgentRuntime:
             return _failure("invalid_output", "invalid_model_output")
         finally:
             await client.aclose()
+
+
+def _sum_usage(items: Any) -> dict[str, Any] | None:
+    """Consumo de todas as execuções da chamada (tokens e custo em US$ informados pelo OpenCode)."""
+    found = [item for item in items if isinstance(item, Mapping)]
+    if not found:
+        return None
+    keys = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
+    total: dict[str, Any] = {key: sum(int(item.get(key, 0)) for item in found) for key in keys}
+    total["cost_usd"] = sum(float(item.get("cost_usd", 0.0)) for item in found)
+    return total
 
 
 def _failure(
