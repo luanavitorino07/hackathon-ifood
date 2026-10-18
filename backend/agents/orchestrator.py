@@ -136,7 +136,10 @@ class Orchestrator:
                 events.conflict(cid, ["planner", "auditor"], f"Proposta {rid} descartada", "resolved")
         if not approved:
             unverifiable = tag_requirements(state.constraints, state.offers)
-            if not state.offers:
+            if not state.offers and state.query_terms:
+                reason = f"Não encontrei \"{' '.join(state.query_terms)}\" disponível agora perto de você."
+                ask = "Quer tentar outro prato ou um termo mais geral?"
+            elif not state.offers:
                 reason, ask = "Não encontrei ofertas disponíveis.", "Pode ajustar o pedido?"
             elif state.relevance_miss:
                 reason = f"Não encontrei \"{' '.join(state.query_terms)}\" disponível agora perto de você."

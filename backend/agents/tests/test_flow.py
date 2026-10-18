@@ -450,6 +450,10 @@ class RelevanceTest(unittest.TestCase):
         out, *_ = self.ask([TORTA, MARMITA_FRANGO], text="quero comida para 1 pessoa até R$ 100")
         self.assertTrue(out.recommendations)
 
+    def test_empty_search_names_the_dish(self):
+        out, *_ = self.ask([])
+        self.assertIn('Não encontrei "marmita parmegiana" disponível agora', out.reply_text)
+
     def test_closed_restaurant_is_excluded(self):
         closed = dict(MARMITA_PARME, is_open=False)
         out, *_ = self.ask([closed, MARMITA_FRANGO])
