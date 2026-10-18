@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
+import ipaddress
+import secrets
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -39,12 +42,61 @@ class DemoCustomerIdentityResolver:
 
 
 class DemoIdentityResolver(DemoCustomerIdentityResolver):
-    """Perfis fictícios para demonstração local; não é autenticação real."""
+    """Perfis fictícios para demonstração local; não é autenticação real.
+
+    Em modo real, o papel administrativo só pode ser habilitado explicitamente e
+    apenas em conexões realmente locais. Um cookie de sessão opaco permite que o
+    ``EventSource`` do navegador preserve o papel depois de uma primeira chamada
+    ``fetch`` com ``X-Demo-Role: admin``.
+    """
+
+    cookie_name = "ifood_local_demo_admin"
+
+    def __init__(
+        self,
+        *,
+        mode: Literal["real", "demo"] = "demo",
+        allow_real_admin: bool = False,
+        cookie_token: str | None = None,
+    ) -> None:
+        self._mode = mode
+        self._allow_real_admin = allow_real_admin
+        self._cookie_token = cookie_token or secrets.token_urlsafe(32)
 
     async def resolve(self, request: Request) -> RequestIdentity:
-        if request.headers.get("x-demo-role") == "admin":
+        header_admin = request.headers.get("x-demo-role") == "admin"
+        cookie_admin = hmac.compare_digest(
+            request.cookies.get(self.cookie_name, ""),
+            self._cookie_token,
+        )
+        if (header_admin or cookie_admin) and self._admin_is_allowed(request):
+            if header_admin:
+                request.state.issue_local_demo_admin_cookie = self._cookie_token
             return RequestIdentity("tenant_demo", "manager_demo_1", "admin")
         return await super().resolve(request)
+
+    def _admin_is_allowed(self, request: Request) -> bool:
+        if self._mode == "demo":
+            return True
+        return self._allow_real_admin and _is_loopback_request(request)
+
+
+def _is_loopback_request(request: Request) -> bool:
+    """Não confia em cabeçalhos de proxy para conceder o papel administrativo."""
+
+    if request.client is None or not _is_loopback_host(request.client.host):
+        return False
+    hostname = request.url.hostname
+    return hostname is not None and _is_loopback_host(hostname)
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True, slots=True)

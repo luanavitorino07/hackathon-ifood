@@ -37,6 +37,7 @@ from .models import (
 from .services import (
     AgentCatalogProvider,
     DemoCustomerIdentityResolver,
+    DemoIdentityResolver,
     EmptyAgentCatalog,
     IdentityResolver,
     MessageDispatch,
@@ -85,6 +86,21 @@ def create_app(
     app.state.transcription_provider = transcription_provider
     app.state.memory = memory
     app.state.session_mode = Mode(session_mode)
+
+    @app.middleware("http")
+    async def persist_local_demo_admin(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        token = getattr(request.state, "issue_local_demo_admin_cookie", None)
+        if token is not None and request.url.path == "/api/v1/admin/overview":
+            response.set_cookie(
+                key=DemoIdentityResolver.cookie_name,
+                value=token,
+                httponly=True,
+                secure=False,
+                samesite="strict",
+                path="/api/v1",
+            )
+        return response
 
     @app.exception_handler(APIError)
     async def api_error_handler(_: Request, exc: APIError) -> JSONResponse:

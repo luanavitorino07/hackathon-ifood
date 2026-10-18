@@ -4,9 +4,14 @@ Esta composição já inclui `backend.agents` integrado de `feat/agents@9c7180a`
 API, runtime e os seis agentes estão no mesmo checkout; não é mais necessário
 exportar os agentes para uma pasta temporária ou configurar um `PYTHONPATH` extra.
 O módulo `backend/memory` (SQLite e RAG) entrou na `main` pelo PR #3. O RAG já é
-composto pelos agentes; a API ainda usa memória operacional temporária por padrão.
-É possível injetar `SQLiteMemory` em `build_application(memory=...)`, mas isso não
-persiste o cadastro de sessões HTTP, projeções, histórico SSE ou idempotência da API.
+composto pelos agentes e a API agora usa `SQLiteMemory` por padrão, no arquivo
+ignorado `backend/api/.local/session-memory.sqlite3`. Defina `APP_MEMORY_PATH` para
+outro arquivo ou `APP_MEMORY_BACKEND=ephemeral` para voltar à memória temporária.
+Também é possível injetar a implementação em `build_application(memory=...)`.
+
+O SQLite persiste o estado compartilhado dos agentes, mas ainda não persiste o
+cadastro/autorização das sessões HTTP, projeções, histórico SSE ou idempotência da
+API. Portanto, reiniciar o processo ainda não restaura sozinho um atendimento HTTP.
 
 Na raiz do projeto, com as dependências instaladas:
 
@@ -194,13 +199,23 @@ Na demo, o comprador é `client_demo_1`. O gestor usa `X-Demo-Role: admin` nas
 requisições de catálogo, overview, histórico, snapshot e SSE. Isso é um seletor
 de papel para demonstração local, não autenticação de produção.
 
-O frontend precisa enviar o cabeçalho também ao consumir SSE (por exemplo, com
-streaming via fetch; EventSource nativo não permite definir cabeçalhos próprios).
-Não enviar esse cabeçalho nas chamadas do comprador.
+Para `EventSource` nativo, que não aceita cabeçalho customizado, o painel deve fazer
+primeiro um `fetch` same-origin para `/api/v1/admin/overview` com
+`X-Demo-Role: admin`. A resposta instala um cookie de sessão opaco, `HttpOnly` e
+`SameSite=Strict`; depois disso o `EventSource` same-origin recebe a visão do gestor
+sem papel ou credencial na URL. Não enviar o cabeçalho nas chamadas do comprador.
 
-No modo real, o cabeçalho é ignorado. A identidade padrão continua sendo a
-identidade local de comprador; autenticação real e perfil de gestor exigem
-`build_application(identity_resolver=...)`. Não publicar como serviço de produção.
+No modo real, o cabeçalho continua ignorado por padrão. Para uma apresentação local,
+inicie explicitamente com:
+
+```text
+python -m backend.api.run_local --real --local-demo-admin
+```
+
+Essa opção só concede o gestor fictício quando tanto o cliente quanto o host da URL
+são loopback (`localhost`, `127.0.0.1` ou `::1`). O launcher permanece vinculado a
+`127.0.0.1`; a opção não é autenticação real e não deve ser usada em produção. Para
+produção, injete um `IdentityResolver` autenticado em `build_application(...)`.
 
 ## Contexto inicial
 
@@ -217,10 +232,10 @@ ou null; preferências/restrições são listas de strings não vazias.
 O contexto é salvo com revisão esperada 0 e autor `api` antes de publicar a sessão.
 API e agentes compartilham `app.state.memory` / `app.state.agent_services.memory`.
 Cada mensagem carrega novamente o contexto da memória e encaminha o modo da sessão.
-Para memória persistente, injete `build_application(memory=...)`; o padrão é
-`EphemeralSessionMemory`, em `backend/api/session_memory.py`, com isolamento de
-sessões, cópias defensivas e controle de revisão. Não possui banco/RAG, perde os
-dados ao reiniciar e não depende de `backend.agents.testing.fakes`.
+O padrão é `SQLiteMemory`, compartilhado por API e agentes. Para testes que precisem
+de isolamento em memória, use `build_application(memory_backend="ephemeral")` ou
+injete `EphemeralSessionMemory`; essa implementação mantém cópias defensivas e
+controle de revisão, mas perde os dados ao reiniciar.
 
 ## Aceite e pendências
 

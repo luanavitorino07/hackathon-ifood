@@ -17,6 +17,7 @@ def clean_location(monkeypatch):
         "IFOOD_TEST_LOCATION",
         "IFOOD_FALLBACK_LOCATION_SOURCE",
         "APP_RUNTIME_MODE",
+        "APP_ALLOW_LOCAL_DEMO_ADMIN",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -67,6 +68,17 @@ def test_local_launcher_stays_demo_without_real_option():
     configure_local_environment(real=False)
     assert os.environ["APP_RUNTIME_MODE"] == "demo"
     assert SandboxLocation.from_env() is None
+
+
+def test_local_launcher_can_explicitly_enable_real_demo_admin():
+    configure_local_environment(real=True, local_demo_admin=True)
+    assert os.environ["APP_ALLOW_LOCAL_DEMO_ADMIN"] == "1"
+
+
+def test_local_launcher_clears_inherited_demo_admin_option(monkeypatch):
+    monkeypatch.setenv("APP_ALLOW_LOCAL_DEMO_ADMIN", "1")
+    configure_local_environment(real=True)
+    assert "APP_ALLOW_LOCAL_DEMO_ADMIN" not in os.environ
 
 
 def test_other_city_is_not_silently_searched_in_sao_carlos():
