@@ -1,0 +1,35 @@
+{
+  "resultKind": "ITEM",
+  "results": [
+    {
+      "itemId": "e60edfd1-6f08-45e5-8751-6cda52d9cdf4",
+      "itemName": "Combo Pizza Pequena + Bebida",
+      "unitPrice": 68.5,
+      "promotionalUnitPrice": 68.5,
+      "merchant": {
+        "merchantId": "17f4a005-8c29-402b-9d1c-21fd76de786a",
+        "merchantName": "VILA DA PIZZA",
+        "deliveryMethod": {
+          "fee": 0,
+          "promotionalFee": 0,
+          "estimatedMinutes": {"min": 38, "max": 48}
+        }
+      }
+    },
+    {
+      "itemId": "c1fce876-c9c0-4a4b-8fd5-41da2e0c715c",
+      "itemName": "Pizza Grande: 1/2 Calabresa 1/2 Mussarela + Guaraná 1,5 l",
+      "unitPrice": 54.99,
+      "promotionalUnitPrice": 44.99,
+      "merchant": {
+        "merchantId": "dbf03165-7e28-4f3b-9d1a-ae2875461fd8",
+        "merchantName": "La Sapore Pizza",
+        "deliveryMethod": {
+          "fee": 6.99,
+          "promotionalFee": 0,
+          "estimatedMinutes": {"min": 28, "max": 38}
+        }
+      }
+    }
+  ]
+}

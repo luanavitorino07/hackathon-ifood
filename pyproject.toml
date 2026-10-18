@@ -1,0 +1,28 @@
+[project]
+name = "hackathon-ifood-backend"
+version = "0.1.0"
+description = "Backend API and integrations for the iFood hackathon"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "httpx>=0.27,<1",
+    "pydantic>=2.10,<3",
+    "python-multipart>=0.0.20,<1",
+    "uvicorn[standard]>=0.30,<1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
+    "ruff>=0.14,<1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/api/tests", "backend/integrations/tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
