@@ -257,8 +257,79 @@ class ExtrasTest(unittest.TestCase):
         self.assertIn("Inclui coca zero", first["reasons"])
         other = next(r for r in out.recommendations if r["merchant_id"] == "b")
         self.assertIn("Sem 'coca zero' neste restaurante na busca; peça à parte", other["warnings"])
-        self.assertEqual(len(rt.calls), 2)  # prato + complemento
+        # prato + complemento + coca procurada DENTRO do Burger B (único restaurante do prato sem ela)
+        self.assertEqual([c.context.get("merchant_id") for c in rt.calls], [None, None, "b"])
         self.assertNotIn("Mercado", [r["merchant_name"] for r in out.recommendations])
+
+    def test_two_complements_found_inside_the_dish_restaurant(self):
+        """Bug relatado: 'parmegiana com coca e batata frita' saía com só um dos dois complementos."""
+        catalog = {
+            "parmegiana": [offer("p1", "Parmegiana de Frango", 3500, "Cantina", "k"),
+                           offer("p2", "Parmegiana + Fritas", 3900, "Marmitaria", "t")],
+            "coca": [offer("c1", "Coca-Cola Lata", 600, "Lanchonete", "x")],  # busca geral: outro restaurante
+            "batata frita": [offer("f1", "Batata Frita Média", 1500, "Cantina", "k")],
+        }
+        inside = {("coca", "k"): [offer("c2", "Coca-Cola 600ml", 800, "Cantina", "k")]}
+
+        class StoreRuntime(ByQueryRuntime):
+            def run(self, call):
+                key = next((k for k in inside if f"Produto desejado: {k[0]}." in call.prompt
+                            and call.context.get("merchant_id") == k[1]), None)
+                if key is None:
+                    return super().run(call)
+                self.calls.append(call)
+                trace = ToolTrace("s", "offer_search", "demo", "succeeded", 1, "loja")
+                return RuntimeOutcome(ok=True, structured={"offers": copy.deepcopy(inside[key])}, tool_calls=(trace,))
+
+        judged = {"items": [{"product_id": p, "fit": "sim", "reason": "ok"} for p in ("p1", "p2", "c1", "c2", "f1")]}
+        rt = StoreRuntime(catalog, reasoning={
+            "interpreter": reading(busca="parmegiana", complementos=["coca", "batata frita"]), "curator": judged})
+        _, _, say = make(rt)
+        out = say("quero uma parmegiana de frango com coca e batata frita")
+        first = out.recommendations[0]
+        self.assertEqual(first["merchant_name"], "Cantina")
+        self.assertEqual({i["name"] for i in first["items"]},
+                         {"Parmegiana de Frango", "Coca-Cola 600ml", "Batata Frita Média"})
+        self.assertIn("Inclui coca, batata frita", first["reasons"])
+
+    def test_meal_with_coke_or_other_potato_is_not_the_complement(self):
+        """IA real aceitou 'Estrogonofe + Coca' como a coca e 'Batata Recheada' como batata frita."""
+        catalog = {"parmegiana": [offer("p1", "Parmegiana de Frango", 3500, "Dona", "d")],
+                   "coca": [offer("c1", "Estrogonofe de Frango + Coca-Cola Zero 200ml", 3200, "Dona", "d")],
+                   "batata frita": [offer("f1", "Batata Recheada de Brócolis", 2800, "Dona", "d"),
+                                    offer("f2", "Batata Frita com Cheddar", 1900, "Dona", "d")]}
+        judged = {"items": [{"product_id": "p1", "fit": "sim", "reason": "ok"}, {"product_id": "c1", "fit": "sim", "reason": "ok"},
+                            {"product_id": "f1", "fit": "nao", "reason": "recheada"}, {"product_id": "f2", "fit": "sim", "reason": "ok"}]}
+        rt = ByQueryRuntime(catalog, reasoning={
+            "interpreter": reading(busca="parmegiana", complementos=["coca", "batata frita"]), "curator": judged})
+        _, _, say = make(rt)
+        rec = say("parmegiana com coca e batata frita").recommendations[0]
+        self.assertEqual({i["name"] for i in rec["items"]}, {"Parmegiana de Frango", "Batata Frita com Cheddar"})
+        self.assertIn("Sem 'coca' neste restaurante na busca; peça à parte", rec["warnings"])
+
+    def test_brand_name_complement_accepted_when_ai_says_yes(self):
+        catalog = {"hambúrguer": [offer("b1", "Big Mac", 3000, "Mc", "m")],
+                   "batata frita": [offer("f1", "McFritas Média", 1200, "Mc", "m")]}
+        judged = {"items": [{"product_id": p, "fit": "sim", "reason": "ok"} for p in ("b1", "f1")]}
+        rt = ByQueryRuntime(catalog, reasoning={
+            "interpreter": reading(busca="hambúrguer", complementos=["batata frita"]), "curator": judged})
+        _, _, say = make(rt)
+        rec = say("hambúrguer com batata frita").recommendations[0]
+        self.assertEqual({i["name"] for i in rec["items"]}, {"Big Mac", "McFritas Média"})
+
+    def test_strategy_never_puts_incomplete_order_first(self):
+        """A IA do Estrategista pôs na frente a opção mais barata, sem a coca pedida; a completa precisa vir antes."""
+        import json, re
+
+        def cheapest_first(prompt):
+            ids = [o["id"] for o in json.loads(re.search(r"OPCOES_JSON:\s*(.*)", prompt).group(1))]
+            return {"estrategia": "custo_beneficio", "precisa_incentivo": False, "ordem": ids[::-1],
+                    "argumento": "Melhor preço.", "motivo": "custo-benefício"}
+        rt = self.runtime()
+        rt.reasoning["sales_strategist"] = cheapest_first
+        _, _, say = make(rt)
+        out = say("quero hambúrguer com coca zero")
+        self.assertEqual({i["name"] for i in out.recommendations[0]["items"]}, {"X-Burger", "Coca-Cola Zero Lata"})
 
     def test_and_the_coke_keeps_the_burger(self):
         rt = ByQueryRuntime(self.CATALOG, reasoning={"interpreter": reading(busca="hambúrguer"),

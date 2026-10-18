@@ -9,6 +9,7 @@ from .models import (SOFT_FILTERS, VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResul
                      WorkingState, dietary_filters, filtered_mark, option_requirements, restriction_label)
 from .ports import RuntimeCall, RuntimeOutcome
 from .registry import AgentContext, AgentDefinition
+from .relevance import score
 
 OFFER_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -38,6 +39,8 @@ OFFER_SCHEMA: dict[str, Any] = {
 
 GROCERIES = "GROCERIES"  # `merchantType` do searchOffers para supermercados
 MAX_STORE_SEARCHES = 4  # buscas extras dentro do mercado escolhido, para completar a lista
+EXTRA_RESTAURANTS = 3  # restaurantes do prato onde os complementos que faltam são procurados
+MAX_EXTRA_STORE_SEARCHES = 4
 
 SYSTEM = (
     "Você é o Pesquisador de um chatbot de compras. Use SOMENTE as ferramentas de busca "
@@ -138,10 +141,49 @@ class Researcher:
                 continue
             found[extra] = len(extra_offers)
             for o in extra_offers:
-                ctx.state.extra_of.setdefault(o.product_id, extra)
-                if o.product_id not in known:
-                    offers.append(o)
-                    known.add(o.product_id)
+                if o.product_id in known:  # já veio na busca do prato (ex.: combo com fritas): continua prato
+                    continue
+                ctx.state.extra_of[o.product_id] = extra
+                offers.append(o)
+                known.add(o.product_id)
+        found.update(self._extras_in_restaurants(ctx, origin, offers, known))
+        return found
+
+    def _extras_in_restaurants(self, ctx: AgentContext, origin: str, offers: list[Offer],
+                               known: set[str]) -> dict[str, int]:
+        """Complemento que a busca geral não trouxe do restaurante do prato: procura DENTRO dos restaurantes
+        mais aderentes ao prato (`merchant_id`), para o pedido sair inteiro de uma loja só."""
+        st = ctx.state
+        main = [o for o in offers if o.product_id not in st.extra_of and o.is_open is not False]
+        best: dict[str, int] = {}  # soma: restaurante com vários itens do prato (pizzaria) antes de um item solto
+        for o in main:
+            best[o.merchant_id] = best.get(o.merchant_id, 0) + score(o, st.query_terms)
+        ranked = sorted(best, key=lambda m: (-best[m], m))[:EXTRA_RESTAURANTS]
+        has = {(o.merchant_id, st.extra_of[o.product_id]) for o in offers if o.product_id in st.extra_of}
+        found: dict[str, int] = {}
+        calls = 0
+        for merchant in ranked:
+            name = next(o.merchant_name for o in main if o.merchant_id == merchant)
+            for extra in st.extra_terms:
+                if (merchant, extra) in has or calls >= MAX_EXTRA_STORE_SEARCHES:
+                    continue
+                calls += 1
+                prompt = (f"Pedido do cliente: {ctx.session.message_text}\nProduto desejado: {extra}. Use somente "
+                          "estes termos na query da busca e ordene por relevância.")
+                outcome, got, _ = self._search(ctx, prompt, [], {"merchant_id": merchant})
+                if not outcome.ok or origin_of(outcome) != origin:
+                    continue
+                got = [o for o in got if o.merchant_id == merchant]
+                for o in got:
+                    if o.product_id not in known:
+                        st.extra_of[o.product_id] = extra
+                        offers.append(o)
+                        known.add(o.product_id)
+                found[f"{extra} em {name}"] = len(got)
+        if calls:
+            ctx.events.agent_message("researcher", "curator", ctx.task_id, "request",
+                                     f"Procurei os complementos dentro de {len(ranked)} restaurante(s) do prato "
+                                     f"({calls} busca(s)) para o pedido sair de uma loja só")
         return found
 
     def _run_groceries(self, ctx: AgentContext) -> AgentResult:

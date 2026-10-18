@@ -152,6 +152,8 @@ class DemoCatalogRuntime:
             hits = [i for i in DEMO_CATALOG
                     if any(slug(k) in words or slug(k) in text for k in i["keywords"] if slug(k) not in _GENERIC)]
             items = hits or DEMO_CATALOG
+            if call.context.get("merchant_id"):  # busca dentro de um restaurante
+                items = [i for i in hits if i["merchant_id"] == call.context["merchant_id"]]
         for f in call.context.get("dietary_filters") or []:
             tag = _FILTER_TAG.get(f)
             if tag:

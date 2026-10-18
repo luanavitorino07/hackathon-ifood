@@ -50,6 +50,16 @@ def performance_text(stats: list[tuple[str, int, int]] | tuple[tuple[str, int, i
     return "; ".join(f"{STRATEGIES.get(k, k)} {a}/{n}" for k, n, a in stats if n)
 
 
+def missing_complements(rec: dict) -> int:
+    """Quantos complementos pedidos (bebida, acompanhamento) faltam nesta opção."""
+    return sum(1 for w in rec["warnings"] if w.startswith("Sem '") and "peça à parte" in w)
+
+
+def complete_first(recs: list[dict]) -> list[dict]:
+    """A estratégia escolhe a ordem, mas opção com tudo o que o cliente pediu vem antes da incompleta."""
+    return sorted(recs, key=missing_complements)  # estável: mantém a ordem da estratégia entre iguais
+
+
 class SalesStrategist:
     definition = AgentDefinition(
         "sales_strategist", "Estrategista de vendas", "Personalização da oferta",
@@ -83,7 +93,7 @@ class SalesStrategist:
         decided = self._ask_ai(ctx, approved, facts, strategy)
         if decided is not None:
             order, why = decided
-            st.recommendations = order + [r for r in st.recommendations if r not in order]
+            st.recommendations = complete_first(order + [r for r in st.recommendations if r not in order])
             self._brief_discount(ctx)
             return AgentResult("sales_strategist", "done", {"reordered": True, "by": "ia", "strategy": st.strategy},
                                f"Estratégia aplicada: {STRATEGIES[st.strategy or 'custo_beneficio']} — {why}"
@@ -94,7 +104,7 @@ class SalesStrategist:
             return AgentResult("sales_strategist", "done", {"reordered": False, "strategy": st.strategy},
                                "Estratégia aplicada: Melhor custo-benefício — sem IA e sem preferência aplicável, "
                                "ordem por preço mantida.", "low")
-        st.recommendations = favored + [r for r in st.recommendations if r not in favored]
+        st.recommendations = complete_first(favored + [r for r in st.recommendations if r not in favored])
         source = {"demo": "histórico DEMO"}.get(basis or "", "preferência declarada/pedidos anteriores")
         if strategy:
             source += f", conforme \"{strategy[0]}\""

@@ -20,7 +20,9 @@ SYSTEM = ("Você é o Curador de um chatbot de compras de comida. Julgue, item p
           "preferência explícita, ex.: 'monte o seu' quando pediram pronto). Itens com papel 'prato' são julgados "
           "só contra o PRATO: complementos pedidos (bebida etc.) já foram buscados à parte, então um hambúrguer "
           "sem bebida continua 'sim'; 'combo' é preferência, não exigência. Item com papel 'complemento: X' é "
-          "julgado só contra X (ex.: Coca-Cola Zero lata é 'sim' para 'coca zero'). Em 'inclui', liste os "
+          "julgado só contra X (ex.: Coca-Cola Zero lata é 'sim' para 'coca zero'); 'sim' só se o item é o X sozinho (lata, "
+          "garrafa, porção): outro prato ou combo que traz X junto ('Estrogonofe + Coca') é 'nao' nesse papel, e "
+          "'Batata Recheada' não é 'batata frita'. Em 'inclui', liste os "
           "COMPLEMENTOS_JSON que um item 'prato' já traz (ex.: 'Combo X-Burger + Coca lata' inclui 'coca'; "
           "'Combo + Bebida' ou '+ Refrigerante' a escolher também inclui um refrigerante pedido, como 'coca zero'). Em 'serves', diga para quantas "
           "pessoas o item serve (lanche ou marmita = 1; pizza grande ou 'combo 2 pizzas' = 2; combo família = 4); "
@@ -76,10 +78,20 @@ def _satisfied(item: dict, restrictions: dict[str, str], evaluated: bool = False
                  if r not in no and (r in yes or (checked and r not in LIFESTYLE_RESTRICTIONS)))
 
 
+MAX_EXTRAS = 12
+
+
 def _sample(st: WorkingState) -> list:
-    """Até MAX_ITEMS itens, reservando espaço para os complementos (que vêm depois na lista)."""
-    extras = [o for o in st.offers if o.product_id in st.extra_of][:6]
-    main = [o for o in st.offers if o.product_id not in st.extra_of][:MAX_ITEMS - len(extras)]
+    """Até MAX_ITEMS itens. Primeiro os pratos e complementos dos restaurantes que têm os dois (o pedido sai
+    de uma loja só); com lista grande, a IA julgaria só uma parte."""
+    main = [o for o in st.offers if o.product_id not in st.extra_of]
+    extras = [o for o in st.offers if o.product_id in st.extra_of]
+    dish = {o.merchant_id for o in main}
+    kinds: dict[str, set[str]] = {}
+    for o in extras:
+        kinds.setdefault(o.merchant_id, set()).add(st.extra_of[o.product_id])
+    extras = sorted(extras, key=lambda o: (o.merchant_id not in dish, -len(kinds[o.merchant_id])))[:MAX_EXTRAS]
+    main = sorted(main, key=lambda o: -len(kinds.get(o.merchant_id, ())))[:MAX_ITEMS - len(extras)]
     return main + extras
 
 
