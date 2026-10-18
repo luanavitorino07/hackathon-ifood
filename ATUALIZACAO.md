@@ -17,6 +17,8 @@
   (`ScheduleTicker`, `run_due_schedules`). Os 2 testes antigos foram ajustados (10 agentes; permissões sem
   índice). Suítes: agentes 170, memória 19, API+integrações 153 ok.
 - Testado no iFood real + Haiku: "lista do mercado: arroz 5kg e café" → cesta no Oba Hortifruti São Carlos.
+- **PR #20:** comida com bebida + acompanhamento ("parmegiana com coca e batata frita") saía só com um. Agora o
+  Pesquisador procura o complemento dentro do restaurante do prato e a opção completa vem primeiro. Testado no real.
 - **PR #19 (correção):** "adiciona detergente" deixava a cesta só com arroz (IA julgava só parte de 100
   produtos). Agora vão no máximo 6 candidatos por item e o não julgado usa a regra por palavras. Testado no real.
 
