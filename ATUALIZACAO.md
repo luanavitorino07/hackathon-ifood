@@ -3,6 +3,27 @@
 > Leia antes de continuar. Este arquivo resume o estado da `main` após o merge do PR #2
 > (`b6b7dbe`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 
+## Para Lorenzo — restaurantes fechados podem ser recomendados (Claude, 18/10/2026)
+
+Conferido no código da `main` (`8a89ee2`): **a busca real não filtra restaurantes abertos.**
+
+- O prompt de `searchOffers` em `backend/integrations/agent_runtime.py` (`_build_search_prompt`) não
+  pede `refinements.onlyOpen`, e `_validate_tool_input` não confere esse campo.
+- A resposta do iFood traz `merchant.isOpen`, mas `_map_offers` não lê o campo; os agentes nunca o
+  recebem (o `OFFER_SCHEMA` não tem esse campo).
+- Efeito: o bot pode recomendar restaurante fechado (provável de madrugada ou fora do horário de
+  almoço/jantar; também depende do horário da apresentação).
+
+**Pedido (área `backend/integrations`):**
+1. Instruir e validar `refinements.onlyOpen: true` na chamada, como já é feito com localização e
+   `itemRestrictions`.
+2. Defesa extra: descartar em `_map_offers` os itens com `merchant.isOpen == false`.
+3. Teste offline com resultado contendo um restaurante fechado.
+
+Nenhuma mudança é necessária em `backend/agents`: se só chegarem ofertas de restaurantes abertos, o
+fluxo dos agentes continua igual. Se o iFood não aceitar `onlyOpen`, registre aqui para combinarmos
+outra saída (por exemplo, repassar `is_open` às ofertas e o auditor bloquear).
+
 ## Tarefa para Claude / Gabriel — retomada incremental dos agentes (18/10/2026)
 
 **Solicitação explícita do Lorenzo:** corrigir em `backend/agents/**` a continuação
