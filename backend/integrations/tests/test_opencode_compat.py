@@ -194,6 +194,72 @@ def test_public_test_coordinates_are_not_described_as_verified_sandbox(monkeypat
     assert location.source == "public_test"
 
 
+def test_model_cannot_add_unrequested_dietary_restriction():
+    location = {"latitude": -22.0175, "longitude": -47.89083333}
+    part = {
+        "state": {
+            "input": {
+                "query": "parmegiana de frango",
+                "resultKind": "ITEM",
+                "userLocation": location,
+                "refinements": {"itemRestrictions": ["VEGETARIAN"]},
+            }
+        }
+    }
+    with pytest.raises(InvalidOutputError):
+        _validate_tool_input(part, location=location, dietary=[])
+
+
+@pytest.mark.parametrize("value", [None, False, "true", 1])
+def test_open_filter_must_be_boolean_true(value):
+    location = {"latitude": -22.0175, "longitude": -47.89083333}
+    refinements = {} if value is None else {"onlyOpen": value}
+    part = {
+        "state": {
+            "input": {
+                "query": "pizza",
+                "resultKind": "ITEM",
+                "userLocation": location,
+                "refinements": refinements,
+            }
+        }
+    }
+    with pytest.raises(InvalidOutputError):
+        _validate_tool_input(part, location=location, dietary=[], only_open=True)
+    part["state"]["input"]["refinements"] = {"onlyOpen": True}
+    _validate_tool_input(part, location=location, dietary=[], only_open=True)
+
+
+def test_closed_merchants_are_removed_even_if_search_returned_them():
+    def item(product, is_open):
+        return {
+            "itemId": product,
+            "itemName": "Pizza",
+            "unitPrice": 20,
+            "merchant": {
+                "merchantId": product,
+                "merchantName": "MOCK",
+                "isOpen": is_open,
+                "deliveryMethod": {"fee": 0},
+            },
+        }
+
+    result = _map_offers(
+        {
+            "resultKind": "ITEM",
+            "results": [
+                item("closed", False),
+                item("open", True),
+                item("unknown", None),
+            ],
+        }
+    )
+    assert [o["product_id"] for o in result] == ["open", "unknown"]
+    assert result[0]["is_open"] is True
+    assert "is_open" not in result[1]
+    assert _map_offers({"resultKind": "ITEM", "results": [item("closed", False)]}) == []
+
+
 def test_missing_oauth_is_reported_as_auth_required():
     def handler(request):
         if request.url.path == "/experimental/tool/ids":

@@ -130,14 +130,18 @@ class StateEventSink:
         self._binding: ContextVar[_EventBinding | None] = ContextVar(
             "agent_event_binding", default=None
         )
+        self.catalog_warning_lookup: Callable[[str, str, list[str]], list[str]] | None = None
+        self._catalog_notes: ContextVar[tuple[str, ...]] = ContextVar("catalog_notes", default=())
 
     @contextmanager
     def bind(self, identity: RequestIdentity) -> Iterator[None]:
         binding = _EventBinding(asyncio.get_running_loop(), identity)
         token = self._binding.set(binding)
+        notes_token = self._catalog_notes.set(())
         try:
             yield
         finally:
+            self._catalog_notes.reset(notes_token)
             self._binding.reset(token)
 
     def emit(
@@ -153,6 +157,37 @@ class StateEventSink:
         binding = self._binding.get()
         if binding is None:
             raise RuntimeError("StateEventSink precisa estar vinculado a uma mensagem")
+        if type == "recommendations_ready" and self.catalog_warning_lookup is not None:
+            # Enriquece apenas warnings do contrato v1; não muda preços nem o payload dos agentes.
+            recommendations = []
+            customer_notes = []
+            for recommendation in payload["recommendations"]:
+                notes = self.catalog_warning_lookup(
+                    session_id,
+                    recommendation["merchant_id"],
+                    [item["product_id"] for item in recommendation["items"]],
+                )
+                customer_notes.extend(notes)
+                recommendations.append(
+                    {
+                        **recommendation,
+                        "warnings": list(dict.fromkeys(recommendation["warnings"] + notes)),
+                    }
+                )
+            payload = {**payload, "recommendations": recommendations}
+            self._catalog_notes.set(tuple(dict.fromkeys(customer_notes)))
+        if type == "chat_message" and self._catalog_notes.get():
+            message = payload["message"]
+            if message["role"] == "assistant":
+                payload = {
+                    **payload,
+                    "message": {
+                        **message,
+                        "text": message["text"]
+                        + " Limites da busca: "
+                        + " ".join(self._catalog_notes.get()),
+                    },
+                }
         operation = self._state.publish_event(
             session_id=session_id,
             identity=binding.identity,

@@ -3,6 +3,98 @@
 > Leia antes de continuar. Este arquivo resume o estado da `main` após o merge do PR #2
 > (`b6b7dbe`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 
+## Rascunho LOCAL — qualidade da busca e catálogo — 18/10/2026
+
+**Ainda NÃO publicado.** Lorenzo autorizou somente alterações locais nesta etapa:
+sem pull, commit, push ou merge. Base local `8a89ee2`, após PR #5. Não foi consultada
+uma versão remota mais nova. O recado abaixo só chegará ao Claude após publicação
+posteriormente autorizada; não afirmar que ele já recebeu ou implementou.
+
+### Diagnóstico: não confundir demo, erro de busca e autenticação
+
+- OpenCode local `1.19.3`: `/global/health` saudável e `/mcp` anuncia `ifood: connected`.
+- Consulta independente SOMENTE `initialize`/`tools/list` ao endpoint oficial com o
+  token já salvo pelo OpenCode recebeu **HTTP 401** antes de obter o catálogo.
+  Isso não prova que o OpenCode falhará após eventual refresh automático, mas o
+  status conectado sozinho NÃO comprova autorização atual. Revalidar/renovar OAuth
+  antes do teste real. Nenhum segredo foi impresso; não houve `tools/call` nem Gemini.
+- Reprodução offline no código dos agentes: `classify("Quero parmegiana")` retorna
+  `vague`; `DemoCatalogRuntime` pode devolver o catálogo inteiro para esse pedido.
+  `"Quero parmegiana de frango"` é classificado `order`, mas o demo devolve
+  **PF de Frango Grelhado**, por casar a palavra frango. Não são ofertas reais iFood.
+- No runtime real, a query antes era validada somente como texto não vazio, sem
+  proteger o prato específico; o retorno também não tinha guarda de correspondência.
+
+### Alterações locais do Codex (API / integrations)
+
+- `search_quality.py`: guarda lexical sem cardápio/allowlist de pratos. Extrai a
+  linha do pedido (não usa preferências antigas como substituto), normaliza acentos
+  e algumas grafias equivalentes, exige termos específicos na query e nos nomes
+  retornados. Parmegiana de frango não aceita strogonoff/frango genérico como equivalente.
+- Prompt do runtime explicita os termos obrigatórios e proíbe substituições e
+  afirmações não comprovadas. Query incompatível vira `invalid_query`; não há nova
+  chamada ou tentativa automática. Retorno sem itens compatíveis fica vazio, não
+  se transforma em lista de comidas alternativas apresentada como correspondência.
+- Deduplicação por `(merchant_id, product_id)` e distribuição alternada de ofertas
+  entre os restaurantes realmente retornados. Não cria lojas nem garante variedade
+  se a ferramenta trouxer só uma. Mantida uma chamada e `pageSize=5`; não foram
+  inventados filtros, ordenação por distância, paginação ou ferramentas adicionais.
+- Preservados preço unitário/promocional e frete do retorno MCP em centavos. O
+  contrato v1 já tem `items[].unit_price_cents`; nenhum campo público novo foi criado.
+- Avisos conservadores vão em `Recommendation.warnings` E no texto do assistente:
+  aberto/entrega não confirmados, distância desconhecida, personalização/ingredientes
+  não verificados e preço base sem adicionais não comprovados. Fallback público
+  também deixa explícito que não confirma entrega no endereço do comprador.
+- Avisos usam evidências mínimas efêmeras, isoladas por sessão e produto/loja,
+  limitadas a 256 sessões/250 itens por sessão e validade de 5 minutos. Não guardam
+  prompt, endereço, token ou payload bruto; não são cache de ofertas nem corrigem
+  a retomada dos agentes. Evidência ausente/vencida pede revalidação.
+- Coordenadas explícitas inválidas não caem silenciosamente no fallback. Uma
+  cidade textual diferente de São Carlos/SP não usa automaticamente o preset de
+  São Carlos; retorna localização necessária. Não há geocodificação implementada.
+- O modelo também não pode adicionar `itemRestrictions` quando não foi solicitado.
+
+### O que NÃO está resolvido / alinhamento para o Claude
+
+- **Claude / agentes:** corrigir classificação de pedidos fora da lista `_FOOD`
+  sem manter um cardápio fechado, e o fallback do `DemoCatalogRuntime` que troca
+  pedido específico por pratos contendo apenas uma palavra ou pelo catálogo todo.
+  Criar testes de `parmegiana`, `parmegiana de frango`, pratos sem palavra-chave
+  conhecida e resultado vazio. Não é necessário ampliar catálogo fictício fingindo
+  que veio do iFood. Nenhum arquivo `backend/agents`/`backend/memory` foi alterado aqui.
+- Correspondência lexical é conservadora, NÃO é compreensão semântica: sinônimos
+  não normalizados, ingredientes ausentes do nome, múltiplas alternativas e pedidos
+  complexos podem ser rejeitados mesmo havendo oferta válida. Precisamos alinhar
+  intenção estruturada com o pesquisador; não anunciar solução geral de relevância.
+- **Codex / MCP:** renovar/verificar OAuth e obter schema real antes de implementar
+  consulta de cardápio/complementos, confirmação de funcionamento e distância. As
+  ferramentas conhecidas até esta revisão são searchOffers/listVouchers/setVoucher;
+  somente searchOffers é permitida no runtime. Não presumir que APIs merchant de
+  catálogo dão permissão de consulta pelo MCP consumer. Não habilitar carrinho,
+  voucher, pedido, pagamento ou tool adivinhada para obter complementos.
+- Ingredientes/adicionais com preços e escolhas obrigatórias AINDA NÃO disponíveis:
+  o schema consumer e as ferramentas de detalhe precisam ser confirmados. Não foram
+  inventados campos `isOpen`, `distanceKm`, `options` etc. no retorno oficial.
+- O DTO v1 de item não representa grupos/opções de personalização. Propor contrato
+  interno e eventual extensão/versionamento com a equipe antes de expor modificadores
+  estruturados. Por enquanto comunicar que o preço é base e a mudança não está confirmada.
+- Lojas abertas/perto e sugestões de várias lojas só podem ser garantidas com
+  evidência e cobertura reais. Esta revisão não valida cobertura do endereço nem
+  horário atual; só evita tratá-los como confirmados quando faltam dados.
+
+### Validação local
+
+- Suíte completa offline: **181 aprovados, 1 teste real pulado, 2 xfail conhecidos
+  de retomada dos agentes**. Nenhuma chamada Gemini e nenhuma busca `tools/call` real.
+- Inclui fluxo HTTP com OpenCode/MCP simulados, prato específico, ausência de
+  substituição, dois restaurantes, preços, avisos no chat/snapshot/histórico,
+  isolamento de sessão, TTL, cidades incompatíveis e filtros não solicitados.
+- Arquivos: `backend/integrations/{agent_runtime,search_quality}.py`,
+  `backend/api/{main,services}.py`, testes correspondentes e README da API.
+  Diagnóstico `tools/list` preparado em `.local/inspect_ifood_tools.py` (ignorado).
+- Evidências históricas de buscas reais e credenciais não foram alteradas. Ainda
+  falta teste real depois de autorização/cota; não anunciar MCP corrigido ao vivo.
+
 ## Tarefa para Claude / Gabriel — retomada incremental dos agentes (18/10/2026)
 
 **Solicitação explícita do Lorenzo:** corrigir em `backend/agents/**` a continuação

@@ -27,6 +27,39 @@ O teste real continua desabilitado, salvo `RUN_LIVE_IFOOD=1` explícito. Os test
 offline cobrem conversa, seis agentes, preferência por pizza, orçamento/restrições,
 contexto compartilhado e isolamento de eventos HTTP/SSE entre comprador e gestor.
 
+## Qualidade da busca — alterações locais em preparação
+
+O runtime real protege a especificidade do pedido com uma guarda lexical: a query
+e os nomes dos itens devem manter os termos significativos do prato solicitado.
+Não há lista fechada de pratos. Retorno de strogonoff não é promovido a parmegiana
+de frango; se nada corresponder, a lista fica vazia, sem pesquisa extra automática.
+Isso é conservador: sinônimos não normalizados, descrições incompletas e consultas
+complexas precisam de alinhamento da intenção estruturada com o pesquisador.
+
+As ofertas compatíveis são deduplicadas por produto/loja e distribuídas entre os
+restaurantes retornados. Não são inventadas outras lojas nem ampliadas permissões
+ou chamadas. O retorno existente já contém preço unitário em centavos e mantém a
+promoção informada pelo MCP; personalização não confirmada não vira adicional cobrado.
+
+Como o catálogo consumer detalhado ainda precisa ser confirmado, avisos de dados
+desconhecidos são preservados em `Recommendation.warnings` e no texto do assistente:
+loja aberta/entrega, distância, ingredientes, alterações e preço dos complementos.
+Uma busca com coordenadas públicas não confirma entrega no endereço do usuário.
+Não foram criados campos HTTP de modificadores nem novas ferramentas MCP.
+
+Os avisos são associados a sessão/produto/loja por um armazenamento efêmero limitado
+e com validade de cinco minutos, sem guardar prompt, endereço, credenciais ou retorno
+bruto. Isso não é cache de ofertas e não implementa a retomada dos agentes.
+
+Diagnóstico local desta revisão: OpenCode informa MCP conectado, mas a consulta de
+catálogo com o token salvo recebeu HTTP 401. Esse status não prova falha após refresh
+automático pelo OpenCode; renovar/verificar OAuth antes de validar ao vivo. Nenhuma
+busca real foi executada nesta revisão. Os testes usam OpenCode/MCP simulados.
+
+O catálogo e o classificador do modo demo pertencem a `backend/agents`; ainda podem
+retornar comidas genéricas quando não há correspondência ou não reconhecer um prato
+fora das palavras-chave. O encaminhamento ao Claude está no `ATUALIZACAO.md` local.
+
 ## Runtime
 
 ### Credenciais locais do OpenCode

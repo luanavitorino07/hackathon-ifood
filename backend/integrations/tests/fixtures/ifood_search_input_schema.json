@@ -1,0 +1,155 @@
+{
+  "source": "MCP tools/list autenticado em 2026-10-18; sem busca e sem Gemini",
+  "name": "searchOffers",
+  "inputSchema": {
+    "properties": {
+      "experiment": {
+        "description": "Optional A/B experiment identifier that selects which search pipeline should be used for this request.",
+        "type": "string"
+      },
+      "includeFacets": {
+        "default": false,
+        "description": "When true, includes refinement buckets in facets (price, distance, taxonomy, etc.). Defaults to false.",
+        "type": "boolean"
+      },
+      "intention": {
+        "description": "Optional intention to guide search results. When omitted, derived from resultKind (MERCHANT → 'merchant', ITEM → 'product').",
+        "enum": [
+          "merchant",
+          "product",
+          "merchant_exact",
+          "product_exact"
+        ],
+        "type": "string"
+      },
+      "merchantType": {
+        "description": "Restricts the search to an iFood business unit. When absent, the search crosses all verticals.",
+        "enum": [
+          "RESTAURANT",
+          "GROCERIES",
+          "LIQUORSTORE",
+          "DRUGSTORE",
+          "PETSTORE",
+          "SHOPPING"
+        ],
+        "type": "string"
+      },
+      "nextPageToken": {
+        "description": "Opaque token from the previous response to fetch the next page. Do not invent tokens.",
+        "type": "string"
+      },
+      "pageSize": {
+        "default": 10,
+        "description": "Number of results per page. Default 10, maximum 25.",
+        "type": "number"
+      },
+      "query": {
+        "description": "Free-text user intent — only the descriptive/content part. Qualifiers (price, distance, etc.) go in `refinements`.",
+        "type": "string"
+      },
+      "refinements": {
+        "description": "Semantic filters and ordering. All fields are optional. Conversational mapping: 'cheap' → maxItemPrice + sort:PRICE; 'nearby' → maxDistanceKm + sort:DISTANCE; 'free delivery' → maxDeliveryFee:0 + sort:DELIVERY_FEE; 'fast / within X minutes' → maxDeliveryTimeMinutes + sort:DELIVERY_TIME; 'well-rated' → minRating + sort:RATING; 'open now' → onlyOpen:true; 'with promotion / on sale' → onlyWithPromotion:true.",
+        "properties": {
+          "itemRestrictions": {
+            "description": "Dietary/nutritional item restrictions. For resultKind=ITEM only. Conversational mapping: 'vegan' → VEGAN; 'lactose-free' → LAC_FREE; 'gluten-free' → GLUTEN_FREE.",
+            "items": {
+              "enum": [
+                "LAC_FREE",
+                "SUGAR_FREE",
+                "VEGAN",
+                "VEGETARIAN",
+                "ORGANIC",
+                "GLUTEN_FREE"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "itemTaxonomy": {
+            "description": "Optional. String array of taxonomy ids from facets in a prior response; do not invent values. Each string is either a single level-2 id (no slash) or parent/child as \"level2/level3\" with exactly one slash. Several slash-free ids mean results may match any of those level-2 categories. Strings with more than one slash are skipped.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "maxDeliveryFee": {
+            "description": "Maximum delivery fee (BRL).",
+            "type": "number"
+          },
+          "maxDeliveryTimeMinutes": {
+            "description": "Maximum delivery time ceiling (minutes), applied to deliveryTimeMinutes.max of the quoted delivery method.",
+            "type": "integer"
+          },
+          "maxDistanceKm": {
+            "description": "Maximum geodesic distance to the merchant (km).",
+            "type": "number"
+          },
+          "maxItemPrice": {
+            "description": "Maximum item price (BRL). For resultKind=MERCHANT, returns merchants with at least one item within this limit.",
+            "type": "number"
+          },
+          "maxMinimumOrderAmount": {
+            "description": "Ceiling for the merchant's minimum order amount (BRL), zero or greater. Keeps merchants whose minimum is at or below this value; a merchant that reports no minimum always passes. Independent of maxItemPrice and maxDeliveryFee — each caps its own value, none caps their sum.",
+            "minimum": 0,
+            "type": "number"
+          },
+          "merchantId": {
+            "description": "UUID v4. Restricts results to this merchant. For resultKind=ITEM, canonical path to search or browse within a store after the user picks a merchant (combine with merchantType when needed).",
+            "type": "string"
+          },
+          "minRating": {
+            "description": "Minimum rating score (0–5).",
+            "type": "number"
+          },
+          "onlyOpen": {
+            "description": "If true, returns only merchants that are currently open.",
+            "type": "boolean"
+          },
+          "onlyWithPromotion": {
+            "description": "If true, returns only promotional content. With resultKind=MERCHANT, merchants with an active voucher; with resultKind=ITEM, items with a promotional price.",
+            "type": "boolean"
+          },
+          "sort": {
+            "description": "Ordering: RELEVANCE (default), DELIVERY_FEE, DELIVERY_TIME, DISTANCE, PRICE.",
+            "enum": [
+              "RELEVANCE",
+              "DELIVERY_FEE",
+              "DELIVERY_TIME",
+              "DISTANCE",
+              "PRICE"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "resultKind": {
+        "description": "Desired result type: MERCHANT (stores) or ITEM (items/products). Defaults to MERCHANT when omitted.",
+        "enum": [
+          "MERCHANT",
+          "ITEM"
+        ],
+        "type": "string"
+      },
+      "userLocation": {
+        "description": "User coordinates: { \"latitude\": float, \"longitude\": float }.",
+        "properties": {
+          "latitude": {
+            "description": "Latitude in [-90, 90].",
+            "type": "number"
+          },
+          "longitude": {
+            "description": "Longitude in [-180, 180].",
+            "type": "number"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "required": [
+      "userLocation",
+      "query"
+    ],
+    "type": "object"
+  }
+}

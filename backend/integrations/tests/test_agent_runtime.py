@@ -49,7 +49,14 @@ class _FakeOpenCode:
                                     "latitude": -23.55,
                                     "longitude": -46.63,
                                 },
-                                "refinements": {"itemRestrictions": ["VEGETARIAN"]},
+                                "refinements": {
+                                    "onlyOpen": True,
+                                    **(
+                                        {"itemRestrictions": ["VEGETARIAN"]}
+                                        if "Use refinements.itemRestrictions=" in kwargs["prompt"]
+                                        else {}
+                                    ),
+                                },
                             },
                             "output": json.dumps(self.payload),
                             "time": {"start": 1000, "end": 1042},
@@ -170,13 +177,16 @@ def test_runtime_uses_sao_carlos_preset_in_actual_tool_prompt(monkeypatch) -> No
     async def matching_tool_result(session_id, **kwargs):
         response = await original_prompt(session_id, **kwargs)
         response.raw_response["parts"][0]["state"]["input"]["userLocation"] = {
-            "latitude": location.latitude, "longitude": location.longitude,
+            "latitude": location.latitude,
+            "longitude": location.longitude,
         }
         return response
 
     client.run_prompt = matching_tool_result
     runtime = OpenCodeAgentRuntime(
-        OpenCodeSettings(), sandbox_location=location, client_factory=lambda: client,
+        OpenCodeSettings(),
+        sandbox_location=location,
+        client_factory=lambda: client,
     )
     result = asyncio.run(runtime._execute(_call(location="São Carlos, SP")))
     assert result.ok is True
