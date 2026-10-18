@@ -5,8 +5,8 @@ from typing import Any
 
 from dataclasses import replace
 
-from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, Offer, SessionContext,
-                     WorkingState, dietary_filters, filtered_mark)
+from .models import (SOFT_FILTERS, VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, Offer, SessionContext,
+                     WorkingState, dietary_filters, filtered_mark, option_requirements, restriction_label)
 from .ports import RuntimeCall, RuntimeOutcome
 from .registry import AgentContext, AgentDefinition
 
@@ -125,9 +125,11 @@ class Researcher:
         product = (f"Produto desejado: {' '.join(terms)}. Use somente estes termos na query da busca, "
                    "sem quantidade de pessoas nem orçamento, e ordene por relevância, não só por preço.\n"
                    if terms else "")
-        prompt = (f"Pedido do cliente: {ctx.session.message_text}\n{product}"
-                  f"Orçamento (centavos): {c.budget_cents}; pessoas: {c.party_size}; "
-                  f"restrições: {list(c.dietary)}; preferências: {list(c.preferences)}.")
+        summary = ctx.state.request_summary
+        prompt = (f"Pedido do cliente: {ctx.session.message_text}\n"
+                  + (f"Pedido entendido: {summary}\n" if summary else "") + product
+                  + f"Orçamento (centavos): {c.budget_cents}; pessoas: {c.party_size}; "
+                  f"restrições: {[restriction_label(r) for r in c.dietary]}; preferências: {list(c.preferences)}.")
         base_filters = dietary_filters(c)
         outcome, offers, dropped = self._search(ctx, prompt, base_filters)
         if not outcome.ok:
@@ -141,9 +143,12 @@ class Researcher:
                                "Sessão real sem chamada MCP comprovada; resultado descartado.",
                                limitations=["origem não verificada"])
         limitations = [f"{dropped} oferta(s) inválida(s) descartada(s)"] if dropped else []
+        extra = [SOFT_FILTERS[r] for r in option_requirements(c) if r in SOFT_FILTERS]
         if VEGETARIAN_OPTION in c.dietary and VEGETARIAN_ALL not in c.dietary:
-            # "uma opção vegetariana": busca extra com filtro só para escolher esse item.
-            veg_outcome, veg_offers, _ = self._search(ctx, prompt, sorted(set(base_filters) | {"VEGETARIAN"}))
+            extra.append("VEGETARIAN")
+        for flt in dict.fromkeys(extra):
+            # "uma opção vegetariana/vegana": busca extra com filtro só para escolher esse item.
+            veg_outcome, veg_offers, _ = self._search(ctx, prompt, sorted(set(base_filters) | {flt}))
             if veg_outcome.ok and origin_of(veg_outcome) == origin:
                 by_id = {o.product_id: o for o in offers}
                 for o in veg_offers:
@@ -152,13 +157,16 @@ class Researcher:
                         if known else o
                 offers = list(by_id.values())
             else:
-                limitations.append("busca vegetariana adicional indisponível")
+                limitations.append(f"busca adicional com filtro {flt} indisponível")
         ctx.state.offers, ctx.state.data_origin = offers, origin  # type: ignore[assignment]
         if not offers:
             return AgentResult("researcher", "needs_info", {"offers": 0},
                                "Nenhuma oferta válida encontrada.", "low", limitations,
                                ["ofertas disponíveis"])
         merchants = {o.merchant_id for o in offers}
+        ctx.events.agent_message("researcher", "curator", ctx.task_id, "proposal",
+                                 f"Trouxe {len(offers)} oferta(s) de '{' '.join(terms) or 'comida'}'; "
+                                 "pode julgar se atendem ao pedido?")
         return AgentResult(
             "researcher", "done", {"offers": len(offers), "merchants": len(merchants), "origin": origin},
             f"{len(offers)} oferta(s) de {len(merchants)} restaurante(s); origem {origin}.",

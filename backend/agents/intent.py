@@ -48,8 +48,12 @@ def normalize_restriction(text: str) -> str:
         return VEGETARIAN_ALL
     if s.startswith("vegan"):
         return "vegan"
-    if "gluten" in s and any(w in s for w in ("sem", "free", "livre")):
+    if "gluten" in s and any(w in s for w in ("sem", "free", "livre", "intoler", "celia")):
         return "gluten-free"
+    if "lactose" in s or s.startswith("sem-leite"):
+        return "lactose-free"
+    if "acucar" in s or "diabet" in s:
+        return "sugar-free"
     return s
 
 
@@ -76,6 +80,10 @@ def extract_constraints(text: str, known: Constraints) -> Constraints:
     if "vegetarian" in t:
         dietary -= set(_VEGETARIAN_WORDS)  # a última declaração do cliente define o tipo
         dietary.add(VEGETARIAN_OPTION if re.search(r"(uma|1|alguma)\s+opcao", t) else VEGETARIAN_ALL)
+    if re.search(r"\blactose\b|\bintoleran\w* a lactose|\bsem leite\b", t):
+        dietary.add("lactose-free")
+    if re.search(r"\bsem gluten\b|\bceliac", t):
+        dietary.add("gluten-free")
     return Constraints(budget, party, tuple(sorted(dietary)), known.preferences)
 
 

@@ -122,3 +122,28 @@ class KnowledgeBaseTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DemoSeedTest(unittest.TestCase):
+    def test_fictitious_customers_are_loaded_once(self):
+        from backend.agents.models import persona_key
+        from backend.memory.customer_memory import SQLiteCustomerMemory
+        from backend.memory.demo_seed import PERSONAS, seed_demo_customers
+        memory = SQLiteCustomerMemory()
+        seed_demo_customers(memory)
+        before = memory.strategy_performance("tenant_demo")
+        seed_demo_customers(memory)  # idempotente
+        self.assertEqual(memory.strategy_performance("tenant_demo"), before)
+        carla = memory.profile("tenant_demo", persona_key("client_demo_1", "Carla Mendes"))
+        self.assertEqual(carla.declared_restrictions, ("lactose-free",))
+        self.assertEqual(carla.requests, 4)
+        self.assertEqual(len(PERSONAS), 4)
+
+    def test_acceptance_marks_strategy(self):
+        from backend.memory.customer_memory import SQLiteCustomerMemory
+        memory = SQLiteCustomerMemory()
+        memory.record_offer("t", "c", "s1", "premium", 5000)
+        self.assertEqual(memory.strategy_performance("t"), [("premium", 1, 0)])
+        self.assertEqual(memory.record_acceptance("t", "c", "s1"), "premium")
+        self.assertEqual(memory.strategy_performance("t"), [("premium", 1, 1)])
+        self.assertIsNone(memory.record_acceptance("t", "c", "outra"))

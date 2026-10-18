@@ -19,13 +19,35 @@ def _matches(rec: dict, terms: list[str]) -> list[str]:
     return [t for t in terms if slug(t) and slug(t) in haystack]
 
 
-SYSTEM = ("Você é o Estrategista de vendas de um chatbot de comida. Escolha a ordem de apresentação das "
-          "opções (a primeira é a recomendação principal), usando o pedido, o histórico/preferências do cliente "
-          "e a estratégia aprovada. Não invente preços, itens ou promoções; não use números no argumento. "
-          "'argumento': até 2 frases curtas e simpáticas para o cliente; 'motivo': por que essa ordem, para o gestor.")
-SCHEMA = {"type": "object", "required": ["ordem", "argumento", "motivo"], "properties": {
-    "ordem": {"type": "array", "items": {"type": "string"}}, "argumento": {"type": "string"},
-    "motivo": {"type": "string"}}}
+# Estratégias de venda (DEMO), espelhadas em backend/memory/knowledge/estrategias_venda_demo.md.
+STRATEGIES = {
+    "favorito": "Favorito do cliente",
+    "custo_beneficio": "Melhor custo-benefício",
+    "premium": "Experiência premium",
+    "novidade": "Novidade no estilo do cliente",
+    "saudavel": "Escolha leve e segura",
+}
+_STRATEGY_HELP = ("favorito = priorizar o que o cliente já pede ou declarou gostar; custo_beneficio = menor preço "
+                  "por pessoa; premium = opção mais completa dentro do orçamento; novidade = algo novo parecido "
+                  "com o gosto dele; saudavel = opção mais leve e mais segura para as restrições")
+
+SYSTEM = ("Você é o Estrategista de vendas de um chatbot de comida. Escolha a estratégia de venda e a ordem de "
+          "apresentação das opções (a primeira é a recomendação principal), usando o pedido, o histórico e o "
+          "cadastro do cliente, o DESEMPENHO das estratégias (aceitas/oferecidas) e o documento aprovado. "
+          f"Estratégias: {_STRATEGY_HELP}. Diga também se este cliente precisa de incentivo (desconto) para "
+          "fechar, para o Especialista em descontos. Não invente preços, itens ou promoções; não use números no "
+          "argumento. 'argumento': até 2 frases curtas e simpáticas para o cliente; 'motivo': por que essa "
+          "estratégia e essa ordem, para o gestor, em até 2 frases.")
+SCHEMA = {"type": "object", "required": ["ordem", "argumento", "motivo"],
+          "properties": {
+              "estrategia": {"type": "string", "enum": list(STRATEGIES)},
+              "ordem": {"type": "array", "items": {"type": "string"}}, "argumento": {"type": "string"},
+              "motivo": {"type": "string"}, "precisa_incentivo": {"type": "boolean"}}}
+
+
+def performance_text(stats: list[tuple[str, int, int]] | tuple[tuple[str, int, int], ...]) -> str:
+    """'Favorito do cliente 16/22; ...' (aceitas/oferecidas). Lido também pela Análise financeira."""
+    return "; ".join(f"{STRATEGIES.get(k, k)} {a}/{n}" for k, n, a in stats if n)
 
 
 class SalesStrategist:
@@ -41,6 +63,12 @@ class SalesStrategist:
     def run(self, ctx: AgentContext) -> AgentResult:
         st, session = ctx.state, ctx.session
         facts = consult(ctx, "sales_strategist", "Quais as preferências e o histórico deste cliente?")
+        if st.strategy_performance:  # a Memória também responde quais estratégias têm vendido
+            ctx.events.agent_message("sales_strategist", "customer_memory", ctx.task_id, "request",
+                                     "Quais estratégias de venda estão convertendo?")
+            ctx.events.agent_message("customer_memory", "sales_strategist", ctx.task_id, "proposal",
+                                     "Desempenho das estratégias: " + performance_text(st.strategy_performance))
+            facts = {**facts, "desempenho_estrategias_geral": performance_text(st.strategy_performance)}
         terms, basis = self._patterns(ctx)
         approved = [r for r in st.recommendations if r["recommendation_id"] in st.approved_ids]
         favored = []  # reserva por regra: opções que citam a preferência/histórico
@@ -56,18 +84,35 @@ class SalesStrategist:
         if decided is not None:
             order, why = decided
             st.recommendations = order + [r for r in st.recommendations if r not in order]
-            return AgentResult("sales_strategist", "done", {"reordered": True, "by": "ia"},
-                               f"IA escolheu a ordem das opções: {why}"
+            self._brief_discount(ctx)
+            return AgentResult("sales_strategist", "done", {"reordered": True, "by": "ia", "strategy": st.strategy},
+                               f"Estratégia aplicada: {STRATEGIES[st.strategy or 'custo_beneficio']} — {why}"
                                + (f" (conforme \"{strategy[0]}\")" if strategy else ""), "medium")
+        st.strategy = "favorito" if favored else "custo_beneficio"
+        self._brief_discount(ctx)
         if not favored:
-            return AgentResult("sales_strategist", "done", {"reordered": False},
-                               "Sem IA e sem preferência aplicável: ordem por preço mantida.", "low")
+            return AgentResult("sales_strategist", "done", {"reordered": False, "strategy": st.strategy},
+                               "Estratégia aplicada: Melhor custo-benefício — sem IA e sem preferência aplicável, "
+                               "ordem por preço mantida.", "low")
         st.recommendations = favored + [r for r in st.recommendations if r not in favored]
         source = {"demo": "histórico DEMO"}.get(basis or "", "preferência declarada/pedidos anteriores")
         if strategy:
             source += f", conforme \"{strategy[0]}\""
-        return AgentResult("sales_strategist", "done", {"reordered": True, "favored": len(favored), "by": "regra"},
-                           f"{len(favored)} opção(ões) priorizada(s) por {source}.", "medium")
+        return AgentResult("sales_strategist", "done", {"reordered": True, "favored": len(favored), "by": "regra",
+                                                       "strategy": st.strategy},
+                           f"Estratégia aplicada: Favorito do cliente — {len(favored)} opção(ões) priorizada(s) "
+                           f"por {source}.", "medium")
+
+    @staticmethod
+    def _brief_discount(ctx: AgentContext) -> None:
+        """Passa ao Especialista em descontos a estratégia e se o cliente precisa de incentivo."""
+        st = ctx.state
+        if st.needs_incentive is None:  # sem IA: cliente sensível a preço quando a estratégia é preço
+            st.needs_incentive = st.strategy == "custo_beneficio"
+        opinion = "precisa de incentivo para fechar" if st.needs_incentive else "não precisa de desconto para fechar"
+        ctx.events.agent_message("sales_strategist", "discount_specialist", ctx.task_id, "proposal",
+                                 f"Vou de \"{STRATEGIES.get(st.strategy or '', st.strategy)}\"; "
+                                 f"na minha leitura o cliente {opinion}.")
 
     @staticmethod
     def _patterns(ctx: AgentContext) -> tuple[list[str], str | None]:
@@ -120,7 +165,8 @@ class SalesStrategist:
                     "total": None if r["total_cents"] is None else f"R$ {r['total_cents'] / 100:.2f}",
                     "avisos": r["warnings"]} for r in approved]
         prompt = (f"Pedido do cliente: {ctx.session.message_text}\n"
-                  f"CLIENTE_JSON: {json.dumps(facts, ensure_ascii=False)}\n"
+                  + (f"Pedido entendido: {ctx.state.request_summary}\n" if ctx.state.request_summary else "")
+                  + f"CLIENTE_JSON: {json.dumps(facts, ensure_ascii=False)}\n"
                   f"ESTRATEGIA: {strategy[1] if strategy else 'sem documento'}\n"
                   f"OPCOES_JSON: {json.dumps(options, ensure_ascii=False)}")
         answer = ask(ctx, "sales_strategist", SYSTEM, prompt, SCHEMA)
@@ -133,7 +179,10 @@ class SalesStrategist:
         # o argumento não pode trazer números (preço/quantidade vêm do código, não da IA)
         if pitch and len(pitch) <= 220 and not re.search(r"\d|R\$", pitch):
             ctx.state.pitch = pitch
-        why = answer["motivo"].strip()[:160] or "sem motivo informado"
+        why = answer["motivo"].strip()[:220] or "sem motivo informado"
+        ctx.state.strategy = answer.get("estrategia") or "custo_beneficio"
+        if isinstance(answer.get("precisa_incentivo"), bool):
+            ctx.state.needs_incentive = answer["precisa_incentivo"]
         if order:
-            order[0]["reasons"].append(f"Escolha da IA: {why}")
+            order[0]["reasons"].append(f"Estratégia \"{STRATEGIES[ctx.state.strategy]}\": {why}")
         return order, why

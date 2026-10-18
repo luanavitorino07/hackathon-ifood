@@ -124,6 +124,9 @@ class CustomerProfile:
     last_budget_cents: int | None
     last_at: str | None  # ISO 8601 UTC
     typical_budget_per_person_cents: int | None
+    declared_restrictions: tuple[str, ...] = ()  # cadastro do cliente (ex.: "lactose-free")
+    declared_preferences: tuple[str, ...] = ()
+    strategy_stats: tuple[tuple[str, int, int], ...] = ()  # (estratégia, oferecida, aceita) para este cliente
 
 
 @runtime_checkable
@@ -139,4 +142,20 @@ class CustomerMemoryPort(Protocol):
 
     def forget(self, tenant_id: str, client_id: str) -> int:
         """Apaga o histórico do cliente (correção/remoção); devolve quantos registros saíram."""
+        ...
+
+
+@runtime_checkable
+class StrategyOutcomePort(Protocol):
+    """Opcional na memória do cliente: resultado das estratégias de venda (monitoria)."""
+
+    def record_offer(self, tenant_id: str, client_id: str, session_id: str, strategy: str,
+                     total_cents: int | None) -> None: ...
+
+    def record_acceptance(self, tenant_id: str, client_id: str, session_id: str) -> str | None:
+        """Marca como aceita a última oferta do atendimento; devolve a estratégia dela."""
+        ...
+
+    def strategy_performance(self, tenant_id: str) -> list[tuple[str, int, int]]:
+        """(estratégia, oferecida, aceita) somando todos os clientes do tenant."""
         ...

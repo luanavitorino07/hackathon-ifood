@@ -102,7 +102,7 @@ class FlowTest(unittest.TestCase):
     def test_catalog_lists_registered_agents(self):
         orch, *_ = make("x")
         ids = [a["agent_id"] for a in orch.catalog()]
-        self.assertEqual(ids[:5], ["orchestrator", "researcher", "curator", "planner", "auditor"])
+        self.assertEqual(ids[:6], ["orchestrator", "interpreter", "researcher", "curator", "planner", "auditor"])
         self.assertIn("customer_memory", ids)
 
 
@@ -123,7 +123,7 @@ class ConstraintsTest(unittest.TestCase):
         out = orch.handle_message(ctx)
         self.assertEqual(out.session_status, "waiting_customer")
         self.assertEqual(out.recommendations, [])
-        self.assertIn("alergia-a-amendoim", out.reply_text)
+        self.assertIn("alergia a amendoim", out.reply_text)
         self.assertNotIn("recommendations_ready", sink.types())
         self.assertIn("alergia-a-amendoim", saved(memory)["dietary"])
 
@@ -288,11 +288,13 @@ class CommercialTest(unittest.TestCase):
         self.assertEqual((rec["discount_cents"], rec["total_cents"]), (0, 2 * 5990 + 800))
         self.assertNotIn("desconto", out.reply_text.lower())
 
-    def test_no_discount_in_real_mode(self):
+    def test_real_mode_discount_is_only_a_suggestion_marked_as_demo_hypothesis(self):
         orch, ctx, sink, _ = make("quero pizza para 2 pessoas até R$ 200",
                                   FakeRuntime(offers=PIZZA_ONLY, provider="ifood_mcp"), mode="real")
-        orch.handle_message(ctx)
-        self.assertNotIn("discount_proposed", sink.types())
+        out = orch.handle_message(ctx)
+        proposals = [e["payload"] for e in sink.events if e["type"] == "discount_proposed"]
+        self.assertTrue(proposals and all(p["status"] == "suggested" and p["requires_approval"] for p in proposals))
+        self.assertTrue(all(r["discount_cents"] == 0 for r in out.recommendations))
 
     def test_no_discount_below_policy_minimum(self):
         orch, ctx, sink, _ = make("quero um lanche até R$ 200")
@@ -429,7 +431,7 @@ class RelevanceTest(unittest.TestCase):
     def test_closest_option_comes_with_warning(self):
         out, *_ = self.ask([TORTA, MARMITA_FRANGO])
         self.assertIn("Marmita - Frango", out.reply_text)
-        self.assertIn("Não encontrei exatamente 'parmegiana'", out.reply_text)
+        self.assertIn("Não encontrei exatamente o que você pediu (parmegiana)", out.reply_text)
 
     def test_nothing_relevant_asks_customer_instead_of_suggesting(self):
         out, _, sink, *_ = self.ask([TORTA])

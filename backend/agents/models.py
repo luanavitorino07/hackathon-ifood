@@ -4,6 +4,7 @@ Dinheiro sempre em centavos inteiros de BRL; desconhecido é `None`.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -24,6 +25,31 @@ def slug(text: str) -> str:
     """Normaliza texto livre para comparação (sem acento, minúsculo, hífens)."""
     plain = unicodedata.normalize("NFKD", text.lower()).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]+", "-", plain).strip("-")
+
+
+OPTION_SUFFIX = "_option"  # "<restrição>_option": ao menos um item do pedido atende (ex.: um amigo vegano)
+
+RESTRICTION_LABELS = {"vegetarian": "vegetariana", "vegan": "vegana", "gluten-free": "sem glúten",
+                      "lactose-free": "sem lactose", "sugar-free": "sem açúcar"}
+
+
+def base_restriction(restriction: str) -> str:
+    """'vegan_option' -> 'vegan'; 'vegetarian_option' -> 'vegetarian'."""
+    return restriction[:-len(OPTION_SUFFIX)] if restriction.endswith(OPTION_SUFFIX) else restriction
+
+
+def restriction_label(restriction: str) -> str:
+    base = base_restriction(restriction)
+    label = RESTRICTION_LABELS.get(base, base.replace("-", " "))
+    return f"{label} (para ao menos uma pessoa)" if restriction.endswith(OPTION_SUFFIX) else label
+
+
+def persona_key(client_id: str, name: str | None) -> str:
+    """Chave do cliente na memória. Na demo, a mesma identidade técnica (`client_demo_1`) atende vários
+    clientes fictícios escolhidos pelo nome no `initial_context`; o nome não é guardado, só um hash."""
+    if not name or not name.strip():
+        return client_id
+    return f"{client_id}:{hashlib.sha256(slug(name).encode()).hexdigest()[:12]}"
 
 
 # Restrições "brandas": o iFood só as aceita como filtro de busca, sem tag que as comprove
@@ -56,14 +82,20 @@ def dietary_filters(constraints: "Constraints") -> list[str]:
     o planejador garante ao menos um item vegetariano.
     """
     return sorted({SOFT_FILTERS[_soft_key(d)] for d in constraints.dietary
-                   if d != VEGETARIAN_OPTION and _soft_key(d) in SOFT_FILTERS})
+                   if not d.endswith(OPTION_SUFFIX) and _soft_key(d) in SOFT_FILTERS})
 
 
 def tag_requirements(constraints: "Constraints", offers: "list[Offer] | tuple[Offer, ...]" = ()) -> tuple[str, ...]:
     """Restrições que EXIGEM tag explícita no item: as não-brandas e as brandas comprováveis."""
     skip = set(soft_unverified(constraints, offers)) if offers else set()
     return tuple(d for d in constraints.dietary
-                 if d not in SPECIAL_RESTRICTIONS and d not in skip)
+                 if d not in SPECIAL_RESTRICTIONS and d not in skip and not d.endswith(OPTION_SUFFIX))
+
+
+def option_requirements(constraints: "Constraints") -> tuple[str, ...]:
+    """Restrições de 'ao menos um item' além da vegetariana (ex.: 'vegan' para um amigo vegano)."""
+    return tuple(base_restriction(d) for d in constraints.dietary
+                 if d.endswith(OPTION_SUFFIX) and d != VEGETARIAN_OPTION)
 
 
 @dataclass(frozen=True)
@@ -154,6 +186,13 @@ class WorkingState:
     ai_fit: dict[str, tuple[str, str]] = field(default_factory=dict)  # product_id -> (sim|parcial|nao, motivo)
     ai_serves: dict[str, int] = field(default_factory=dict)  # product_id -> pessoas que o item serve (IA)
     pitch: str | None = None  # argumento de venda escrito pela IA do estrategista
+    request_summary: str | None = None  # o pedido entendido pela IA do Intérprete (com o contexto da conversa)
+    ai_restrictions: dict[str, tuple[str, ...]] = field(default_factory=dict)  # product_id -> restrições atendidas (IA)
+    research_hint: str | None = None  # nova busca sugerida pelo Curador quando nada serve
+    strategy: str | None = None  # estratégia de venda escolhida pelo Estrategista
+    needs_incentive: bool | None = None  # opinião do Estrategista para o Especialista em descontos
+    strategy_performance: list[tuple[str, int, int]] = field(default_factory=list)  # (estratégia, oferecida, aceita)
+    cheapest_over_budget_cents: int | None = None  # a combinação mais barata que estourou o orçamento
 
 
 @dataclass

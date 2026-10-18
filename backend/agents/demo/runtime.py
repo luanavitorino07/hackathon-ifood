@@ -21,7 +21,11 @@ _FILTER_TAG = {"VEGETARIAN": "vegetarian", "VEGAN": "vegan", "GLUTEN_FREE": "glu
 
 def _customer_text(prompt: str) -> str:
     m = re.search(r"Pedido do cliente:\s*(.*)", prompt)
-    return slug(m.group(1) if m else prompt)
+    product = re.search(r"Produto desejado:\s*([^.\n]*)", prompt)
+    return slug((m.group(1) if m else prompt) + (" " + product.group(1) if product else ""))
+
+
+_CONFIRM = re.compile(r"^(sim|fechado|fechou|pode ser|confirmo|confirma|quero esse|quero essa|bora|manda)\b")
 
 
 def _json_after(label: str, prompt: str) -> Any:
@@ -35,6 +39,20 @@ def _json_after(label: str, prompt: str) -> Any:
 def _simulated_reasoning(call: RuntimeCall) -> RuntimeOutcome:
     """IA SIMULADA para a demo offline (regras simples, marcadas como demo). Não é um modelo real."""
     trace = (ToolTrace("demo_ia", "raciocinio_ia", "demo", "succeeded", 1, "IA SIMULADA (demo)"),)
+    if call.agent_id == "interpreter":  # entende por regras e devolve no formato da IA
+        from ..chat import classify
+        from ..relevance import food_terms
+        m = re.search(r"MENSAGEM:\s*(.*)", call.prompt)
+        text = m.group(1).strip() if m else ""
+        shown = "ULTIMA_SUGESTAO: nenhuma" not in call.prompt
+        plain = slug(text).replace("-", " ")
+        intent = ("confirmar" if shown and _CONFIRM.search(plain) else
+                  "pedido" if classify(text, shown) == "order" else "conversa")
+        terms = food_terms(text)
+        return RuntimeOutcome(ok=True, tool_calls=trace, structured={
+            "intencao": intent, "busca": " ".join(terms[:3]) or None, "pessoas": None, "orcamento_reais": None,
+            "restricoes": [], "preferencias": [], "resumo": f"{text} (IA simulada)", "resposta": None,
+            "conflito_com_perfil": None})
     if call.agent_id == "curator":
         terms = [slug(t) for t in _json_after("PRATO_JSON", call.prompt) or []]
         items = _json_after("ITENS_JSON", call.prompt) or []
@@ -58,6 +76,7 @@ def _simulated_reasoning(call: RuntimeCall) -> RuntimeOutcome:
         ordered = sorted(options, key=lambda o: not matches(o))  # estável: preço continua desempate
         hit = bool(ordered) and matches(ordered[0])
         return RuntimeOutcome(ok=True, tool_calls=trace, structured={
+            "estrategia": "favorito" if hit else "custo_beneficio", "precisa_incentivo": not hit,
             "ordem": [o.get("id", "") for o in ordered],
             "argumento": ("Separei esta porque combina com o que você gosta de pedir." if hit
                           else "Escolhi a opção com melhor custo-benefício para o seu pedido."),

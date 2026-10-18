@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from .commercial import DEMO_PURCHASE_HISTORY
-from .models import AgentResult, SessionContext, WorkingState
+from .models import AgentResult, SessionContext, WorkingState, restriction_label
 from .registry import AgentContext, AgentDefinition
 
 MEMORY_ID = "customer_memory"
@@ -29,6 +29,13 @@ def customer_facts(state: WorkingState, session: SessionContext | None = None) -
             "orcamento_tipico_por_pessoa": _brl(p.typical_budget_per_person_cents)
             if p.typical_budget_per_person_cents else None,
         })
+        if p.declared_restrictions:
+            facts["restricoes_do_cadastro"] = [restriction_label(r) for r in p.declared_restrictions]
+        if p.declared_preferences:
+            facts["preferencias_do_cadastro"] = list(p.declared_preferences)
+        if p.strategy_stats:
+            facts["estrategias_com_este_cliente"] = "; ".join(
+                f"{k}: aceitou {a} de {n}" for k, n, a in p.strategy_stats)
     if (session is not None and session.mode == "demo" and not (p and p.favorite_dishes)
             and DEMO_PURCHASE_HISTORY.get(session.client_id or "")):
         facts["historico_demo"] = DEMO_PURCHASE_HISTORY[session.client_id or ""]["description"]
@@ -45,6 +52,12 @@ def summary(facts: dict[str, Any]) -> str:
         parts.append(f"costuma gastar {facts['orcamento_tipico_por_pessoa']} por pessoa")
     if facts.get("historico_demo"):
         parts.append(facts["historico_demo"])
+    if facts.get("restricoes_do_cadastro"):
+        parts.append("cadastro: " + ", ".join(facts["restricoes_do_cadastro"]))
+    if facts.get("preferencias_do_cadastro"):
+        parts.append("gosta de " + ", ".join(facts["preferencias_do_cadastro"]))
+    if facts.get("estrategias_com_este_cliente"):
+        parts.append("estratégias com ele: " + facts["estrategias_com_este_cliente"])
     if facts.get("preferencias_declaradas"):
         parts.append("preferências declaradas: " + ", ".join(facts["preferencias_declaradas"]))
     return "; ".join(parts) or "sem histórico nem preferências registradas"
