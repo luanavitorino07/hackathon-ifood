@@ -1,5 +1,23 @@
 # Atualização do projeto — 18/10/2026
 
+## MAIS RECENTE — Compras de supermercado (na hora ou agendadas) — PR #18 (18/10/2026, `main@8508b4c`)
+
+**Na main e rodando na API 8000.** Arquitetura completa para o documento final: `docs/ARQUITETURA_AGENTES.md`.
+
+- Cliente pode mandar lista de mercado: "compra do mês no mercado: arroz 5kg, 2 feijões, leite e café" ou
+  agendar: "mercado todo sábado às 10h: ...". "adiciona café", "tira o leite", "meus agendamentos" e
+  "cancelar agendamento" funcionam.
+- **Agente novo: Montador da cesta (IA)** — escolhe produto e quantidade por mercado; Auditor confere.
+  Catálogo agora tem **10 agentes**. O agendamento é regra do orquestrador (não é agente).
+- Agendamento fica pendente até o cliente confirmar; na data a API (relógio a cada 30 s,
+  `APP_SCHEDULE_TICK_SECONDS`, `0` desliga) refaz a cesta com os preços do dia e pede confirmação.
+  **Nunca compra sozinho**: o MCP liberado só busca. Agendamentos ficam na memória da API (reiniciar apaga).
+- **Lorenzo:** com autorização do Gabriel, o Claude alterou `backend/integrations/agent_runtime.py`
+  (`merchant_type`/`merchant_id` do contexto vão para o `searchOffers`, com validação) e `backend/api`
+  (`ScheduleTicker`, `run_due_schedules`). Os 2 testes antigos foram ajustados (10 agentes; permissões sem
+  índice). Suítes: agentes 170, memória 19, API+integrações 153 ok.
+- Testado no iFood real + Haiku: "lista do mercado: arroz 5kg e café" → cesta no Oba Hortifruti São Carlos.
+
 ## PASSAGEM PARA OUTRA CONTA / SESSÃO — leia primeiro (18/10/2026, `main@b499d4b`)
 
 Gabriel vai continuar o trabalho em outra conta do Claude. Este bloco é o estado completo agora.
