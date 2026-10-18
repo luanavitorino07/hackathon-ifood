@@ -7,7 +7,7 @@ from .chat import classify, reply_for
 from .events import ORCHESTRATOR_ID, EventEmitter, new_id
 from .intent import constraints_from_initial_context, extract_constraints, overlay, wants_cheaper
 from .models import AgentResult, AgentsOutput, Constraints, SessionContext, WorkingState, tag_requirements
-from .ports import AgentRuntimePort, EventSink, MemoryPort, RevisionConflict
+from .ports import AgentRuntimePort, EventSink, KnowledgePort, MemoryPort, RevisionConflict
 from .failures import classify_failure
 from .registry import Agent, AgentContext, AgentDefinition, AgentRegistry
 
@@ -25,8 +25,9 @@ def _brl(cents: int | None) -> str:
 
 class Orchestrator:
     def __init__(self, registry: AgentRegistry, runtime: AgentRuntimePort,
-                 memory: MemoryPort, sink: EventSink) -> None:
+                 memory: MemoryPort, sink: EventSink, knowledge: KnowledgePort | None = None) -> None:
         self._registry, self._runtime, self._memory, self._sink = registry, runtime, memory, sink
+        self._knowledge = knowledge
 
     def catalog(self) -> list[dict[str, object]]:
         return [ORCHESTRATOR_DEFINITION.to_dict()] + self._registry.catalog()
@@ -174,7 +175,7 @@ class Orchestrator:
         events.agent_message(ORCHESTRATOR_ID, aid, task_id, "request", f"Executar {agent.definition.role}")
         events.agent_status(aid, "running", task_id, agent.definition.role)
         try:
-            result = agent.run(AgentContext(session, state, self._runtime, events, task_id))
+            result = agent.run(AgentContext(session, state, self._runtime, events, task_id, self._knowledge))
         except Exception as exc:  # falha de um agente não derruba o atendimento
             result = AgentResult(aid, "error", {"error": type(exc).__name__},
                                  "Falha interna do agente.", limitations=["exceção interna"])

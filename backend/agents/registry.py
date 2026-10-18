@@ -5,7 +5,7 @@ from typing import Protocol, runtime_checkable
 
 from .events import EventEmitter
 from .models import AgentResult, SessionContext, WorkingState
-from .ports import AgentRuntimePort
+from .ports import AgentRuntimePort, KnowledgePort
 
 
 class AgentDefinition:
@@ -26,9 +26,9 @@ class AgentContext:
     """O que um agente enxerga ao executar."""
 
     def __init__(self, session: SessionContext, state: WorkingState, runtime: AgentRuntimePort,
-                 events: EventEmitter, task_id: str) -> None:
+                 events: EventEmitter, task_id: str, knowledge: KnowledgePort | None = None) -> None:
         self.session, self.state, self.runtime = session, state, runtime
-        self.events, self.task_id = events, task_id
+        self.events, self.task_id, self.knowledge = events, task_id, knowledge
 
 
 @runtime_checkable
