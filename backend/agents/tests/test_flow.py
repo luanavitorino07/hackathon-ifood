@@ -198,15 +198,29 @@ class ConstraintsTest(unittest.TestCase):
         second_message(orch, ctx, "Na verdade, até R$ 50")
         self.assertEqual((saved(memory)["budget_cents"], saved(memory)["party_size"]), (5000, 4))
 
-    def test_restrictions_accumulate_without_duplicates(self):
+    def test_initial_context_is_applied_once_and_later_changes_are_ignored(self):
         orch, ctx, _, memory = make("Quero para 2 pessoas")
         ic = {"restrictions": ["vegetariana"], "preferences": ["japonesa"]}
-        ctx = SessionContext("sess_1", "t", None, "demo", ctx.message_text, initial_context=ic)
-        orch.handle_message(ctx)
         orch.handle_message(SessionContext("sess_1", "t", None, "demo", "Quero para 2 pessoas",
-                                           initial_context={**ic, "preferences": ["japonesa", "barata"]}))
+                                           initial_context=ic))
+        orch.handle_message(SessionContext("sess_1", "t", None, "demo", "Quero para 2 pessoas",
+                                           initial_context={**ic, "preferences": ["barata"]}))
         self.assertEqual(saved(memory)["dietary"], ["vegetarian"])
-        self.assertEqual(saved(memory)["preferences"], ["japonesa", "barata"])
+        self.assertEqual(saved(memory)["preferences"], ["japonesa"])
+
+    def test_customer_correction_survives_initial_context_on_next_messages(self):
+        orch, ctx, _, memory = make("oi")
+        ic = {"restrictions": ["vegetariana"], "preferences": []}
+
+        def send(text):
+            return orch.handle_message(SessionContext("sess_1", "t", None, "demo", text, initial_context=ic))
+
+        send("oi")
+        self.assertEqual(saved(memory)["dietary"], ["vegetarian"])
+        send("quero para 2 pessoas, com uma opção vegetariana")
+        self.assertEqual(saved(memory)["dietary"], ["vegetarian_option"])
+        send("mais barato?")
+        self.assertEqual(saved(memory)["dietary"], ["vegetarian_option"])
 
     def test_null_and_partial_initial_context(self):
         for ic in (None, {}, {"name": "Ana", "age": None, "location": None,

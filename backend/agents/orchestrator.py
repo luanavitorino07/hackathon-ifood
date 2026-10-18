@@ -61,14 +61,20 @@ class Orchestrator:
         return self._finish(session.session_id, state, events, limitations)
 
     def _build_constraints(self, session: SessionContext) -> tuple[Constraints, bool, int | None]:
-        """memória < session.constraints < initial_context < mensagem atual (explícita).
+        """initial_context < constraints persistidas < session.constraints < mensagem atual.
+
+        O `initial_context` só preenche a base na PRIMEIRA vez: depois que `constraints` existe
+        na memória ele já foi absorvido, e reaplicá-lo desfaria correções do cliente.
 
         Devolve também se já há um pedido em andamento (`conversation.stage == "ordering"`).
         """
         state = self._memory.load(session.session_id).state
-        stored = Constraints.from_dict(state.get("constraints"))
-        merged = overlay(stored, session.constraints)
-        merged = constraints_from_initial_context(session.initial_context, merged)
+        stored_raw = state.get("constraints")
+        if isinstance(stored_raw, dict):
+            base = Constraints.from_dict(stored_raw)
+        else:
+            base = constraints_from_initial_context(session.initial_context, Constraints())
+        merged = overlay(base, session.constraints)
         conversation = state.get("conversation")
         in_order = isinstance(conversation, dict) and conversation.get("stage") == "ordering"
         shown = state.get("shown")

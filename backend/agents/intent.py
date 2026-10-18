@@ -1,7 +1,7 @@
 """Construção determinística (sem LLM) das restrições do atendimento.
 
-Precedência, da mais fraca para a mais forte: estado salvo na memória < `session.constraints`
-< `initial_context` (interface) < o que o cliente disser explicitamente na mensagem.
+Precedência, da mais fraca para a mais forte: `initial_context` (só na primeira vez) < estado salvo
+na memória < `session.constraints` < o que o cliente disser explicitamente na mensagem.
 Listas (restrições/preferências) apenas acumulam; nada é removido em silêncio.
 """
 from __future__ import annotations

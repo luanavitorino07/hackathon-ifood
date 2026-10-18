@@ -64,8 +64,10 @@ Monte a partir dos **resultados reais do MCP**, nunca do texto do modelo.
 - **Restrições alimentares:** vegetariana, vegana e sem glúten viram filtro de busca
   (`context.dietary_filters`). Sem tag comprobatória nas ofertas, a recomendação sai com o aviso
   "não comprovada pelo iFood". Qualquer outra restrição bloqueia e pergunta ao cliente.
-- Orçamento, pessoas e restrições persistem entre mensagens (`MemoryPort`, chave `constraints`);
-  o que o cliente disser explicitamente na mensagem substitui o valor anterior.
+- Orçamento, pessoas e restrições persistem entre mensagens (`MemoryPort`, chave `constraints`).
+  Precedência, da menor para a maior: `initial_context` (só enquanto `constraints` ainda não existe
+  na memória) < `constraints` persistidas < `session.constraints` < declaração explícita na mensagem.
+  Depois da primeira mensagem o `initial_context` não é reaplicado, para não desfazer correções do cliente.
 
 ## Conversa (`chat.py`)
 Classificação por regras, sem LLM. Só mensagens de **pedido** (comida, orçamento, pessoas) rodam
