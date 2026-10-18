@@ -225,7 +225,7 @@ def interpret(ctx: AgentContext, base: Constraints, rules: Constraints, stored_t
     prefs = [p.strip()[:60] for p in answer.get("preferencias") or [] if isinstance(p, str) and p.strip()][:3]
     # preferências: a IA devolve a lista atual (pode tirar as que não valem mais); restrições só acumulam
     c = replace(c, dietary=tuple(dict.fromkeys(c.dietary + tuple(added))), preferences=tuple(dict.fromkeys(prefs)))
-    extras = tuple(dict.fromkeys(" ".join(t) for t in (_terms(x) for x in answer.get("complementos") or []) if t))[:2]
+    extras = tuple(dict.fromkeys(" ".join(t) for t in (_terms(x) for x in answer.get("complementos") or []) if t))[:3]
     terms = _terms(answer["busca"]) or fallback.terms
     if intent == "order" and not terms and not in_order and c.party_size is None and c.budget_cents is None:
         intent = "chat"  # "quero comer" sem prato, pessoas nem orçamento: pergunta o quê

@@ -1,6 +1,7 @@
 """Planejador: monta pedidos candidatos por algoritmo (sem LLM) respeitando as restrições."""
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -9,8 +10,9 @@ from .models import (LIFESTYLE_RESTRICTIONS, VEGETARIAN_ALL, VEGETARIAN_OPTION, 
                      Offer, SessionContext, WorkingState, base_restriction, filtered_mark, option_requirements,
                      restriction_label, slug, soft_unverified, tag_requirements)
 from .registry import AgentContext, AgentDefinition
-from .relevance import relevant
+from .relevance import _words, relevant
 
+_COMBO = re.compile(r"\+|\bcombo\b|\bmarmita\b|\bprato\b", re.I)  # complemento que é outro prato
 MAX_RECOMMENDATIONS = 6  # candidatas; o orquestrador apresenta no máximo 3 após a personalização
 
 
@@ -114,13 +116,25 @@ def _extras(st: WorkingState, offers: list[Offer], merchant_id: str, units: int,
     for extra in st.extra_terms:
         if extra in bundled:
             continue
-        fit = lambda o: st.ai_fit.get(o.product_id, ("parcial", ""))[0]  # noqa: E731
+        terms = tuple(w for w in extra.split() if len(w) >= 3) or tuple(extra.split())
+
+        def fit(o: Offer) -> str:
+            """Complemento precisa ser o pedido, sozinho: não pode ser outro prato/combo ('Estrogonofe + Coca'
+            não é a coca); com IA, 'sim' e alguma palavra no nome; sem IA, todas as palavras no nome."""
+            if _COMBO.search(o.name):
+                return "nao"
+            judged = st.ai_fit.get(o.product_id)
+            words = _words(o.name)
+            hits = sum(1 for t in terms if any(t[:5] in w for w in words))  # 'McFritas' contém 'frita'
+            if judged is not None:  # IA julgou: basta uma palavra no nome ('McFritas' é batata frita)
+                return judged[0] if hits else "nao"
+            return "sim" if hits == len(terms) else "nao"
         options = [o for o in offers if o.merchant_id == merchant_id and st.extra_of.get(o.product_id) == extra
-                   and fit(o) != "nao" and has_tags(o, required, st.ai_restrictions)]
+                   and fit(o) == "sim" and has_tags(o, required, st.ai_restrictions)]
         if not options:
             missing.append(extra)
             continue
-        best = min(options, key=lambda o: (fit(o) != "sim", o.unit_price_cents))
+        best = min(options, key=lambda o: o.unit_price_cents)
         picked.append((best, units))
     return picked, missing
 
