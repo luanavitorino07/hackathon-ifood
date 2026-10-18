@@ -10,7 +10,7 @@ from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, Constraints
                      tag_requirements)
 from .registry import AgentContext, AgentDefinition
 
-MAX_RECOMMENDATIONS = 3
+MAX_RECOMMENDATIONS = 6  # candidatas; o orquestrador apresenta no máximo 3 após a personalização
 
 
 def is_vegetarian(offer: Offer, proven: bool = True) -> bool:
@@ -122,7 +122,10 @@ class Planner:
                     continue
                 recs.append(rec)
         recs.sort(key=lambda r: (r["total_cents"] is None, r["total_cents"] or r["subtotal_cents"]))
-        st.recommendations = recs[:MAX_RECOMMENDATIONS]
+        # variedade: a melhor opção de cada restaurante primeiro, depois as demais por preço
+        firsts = [r for i, r in enumerate(recs) if all(o["merchant_id"] != r["merchant_id"] for o in recs[:i])]
+        st.recommendations = (firsts + [r for r in recs if r not in firsts])[:MAX_RECOMMENDATIONS]
+        st.recommendations.sort(key=lambda r: (r["total_cents"] is None, r["total_cents"] or r["subtotal_cents"]))
         limitations = []
         if skipped_budget:
             limitations.append(f"{skipped_budget} combinação(ões) acima do orçamento descartada(s)")

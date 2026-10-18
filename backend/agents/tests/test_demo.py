@@ -23,6 +23,10 @@ class DemoRuntimeTest(unittest.TestCase):
     def test_unknown_text_returns_whole_catalog(self):
         self.assertGreater(len(DemoCatalogRuntime().run(call("asdf")).structured["offers"]), 10)
 
+    def test_generic_words_do_not_restrict_search(self):
+        names = {o["merchant_name"] for o in DemoCatalogRuntime().run(call("quero comida para jantar")).structured["offers"]}
+        self.assertGreaterEqual(len(names), 4)
+
     def test_dietary_filter(self):
         offers = DemoCatalogRuntime().run(call("quero pizza", ["VEGAN"])).structured["offers"]
         self.assertTrue(offers and all("vegan" in o["tags"] for o in offers))
@@ -61,6 +65,18 @@ class DemoConversationTest(unittest.TestCase):
                              out=buf, with_tags=tags)
             self.assertIn("Escondidinho de Mandioca e Legumes", buf.getvalue(), tags)
             self.assertIn("R$ 115,60", buf.getvalue(), tags)
+
+    def test_generic_order_with_pizza_preference_suggests_pizza(self):
+        buf = io.StringIO()
+        run_conversation(["quero comida para 2 pessoas até R$ 200"], out=buf, client_id="anon",
+                         initial_context={"preferences": ["pizza"], "restrictions": []})
+        self.assertIn("Combina com sua preferência: pizza.", buf.getvalue())
+
+    def test_preference_and_demo_history_are_not_repeated(self):
+        buf = io.StringIO()
+        run_conversation(["quero comida para 2 pessoas até R$ 200"], out=buf, client_id="client_demo_1",
+                         initial_context={"preferences": ["pizza"], "restrictions": []})
+        self.assertNotIn("pizza, pizza", buf.getvalue())
 
     def test_failure_mode_is_honest(self):
         buf = io.StringIO()

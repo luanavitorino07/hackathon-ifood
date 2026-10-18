@@ -16,6 +16,9 @@ ORCHESTRATOR_DEFINITION = AgentDefinition(
     "Conversa com o cliente, decide quais especialistas acionar e resolve conflitos", ["orchestration"])
 
 
+PRESENTED_RECOMMENDATIONS = 3
+
+
 def _brl(cents: int | None) -> str:
     return "valor indisponível" if cents is None else f"R$ {cents // 100},{cents % 100:02d}"
 
@@ -104,7 +107,8 @@ class Orchestrator:
 
     def _finish(self, session_id: str, state: WorkingState, events: EventEmitter,
                 limitations: list[str]) -> AgentsOutput:
-        approved = [r for r in state.recommendations if r["recommendation_id"] in state.approved_ids]
+        approved = [r for r in state.recommendations
+                    if r["recommendation_id"] in state.approved_ids][:PRESENTED_RECOMMENDATIONS]
         for rid, problems in state.issues.items():
             if problems:
                 cid = new_id("conf")

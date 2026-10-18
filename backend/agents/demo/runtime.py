@@ -13,6 +13,8 @@ from ..models import slug
 from ..ports import RuntimeCall, RuntimeOutcome, ToolTrace
 from .catalog import DEMO_CATALOG
 
+# Palavras genéricas não restringem a busca: "quero comida" deve ver o catálogo inteiro.
+_GENERIC = {"comida", "prato", "jantar", "janta", "almoco", "refeicao"}
 _FILTER_TAG = {"VEGETARIAN": "vegetarian", "VEGAN": "vegan", "GLUTEN_FREE": "gluten-free"}
 
 
@@ -36,7 +38,8 @@ class DemoCatalogRuntime:
                                   detail=self.fail_detail)
         text = _customer_text(call.prompt)
         words = set(text.split("-"))
-        hits = [i for i in DEMO_CATALOG if any(slug(k) in words or slug(k) in text for k in i["keywords"])]
+        hits = [i for i in DEMO_CATALOG
+                if any(slug(k) in words or slug(k) in text for k in i["keywords"] if slug(k) not in _GENERIC)]
         items = hits or DEMO_CATALOG
         for f in call.context.get("dietary_filters") or []:
             tag = _FILTER_TAG.get(f)

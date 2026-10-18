@@ -43,6 +43,7 @@ class SalesStrategist:
         if not terms:
             return AgentResult("sales_strategist", "done", {"reordered": False},
                                "Sem preferências ou histórico: mantida a ordem por preço.", "low")
+        terms = list(dict.fromkeys(slug(t) for t in terms if slug(t)))  # sem repetição
         approved = [r for r in st.recommendations if r["recommendation_id"] in st.approved_ids]
         favored = []
         for rec in approved:
