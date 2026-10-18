@@ -24,15 +24,30 @@ DEMO_OFFERS: list[dict[str, Any]] = [
 
 
 class FakeRuntime:
-    """Runtime simulado. `error` força falha; `offers` substitui o catálogo demo."""
+    """Runtime simulado. `error` força falha; `offers` substitui o catálogo demo.
+
+    Buscas (com ferramentas) vão para `calls`; perguntas de raciocínio à IA (sem ferramentas) vão para
+    `reasoning_calls` e respondem com `reasoning[agent_id]` (dict ou função do prompt). Sem resposta
+    configurada, a IA fica "indisponível" e o agente usa a regra de reserva.
+    """
 
     def __init__(self, offers: list[dict[str, Any]] | None = None, error: str | None = None,
-                 provider: str = "demo", detail: str | None = "falha simulada") -> None:
+                 provider: str = "demo", detail: str | None = "falha simulada",
+                 reasoning: dict[str, Any] | None = None) -> None:
         self.offers = DEMO_OFFERS if offers is None else offers
         self.error, self.provider, self.detail = error, provider, detail
+        self.reasoning = reasoning or {}
         self.calls: list[RuntimeCall] = []
+        self.reasoning_calls: list[RuntimeCall] = []
 
     def run(self, call: RuntimeCall) -> RuntimeOutcome:
+        if not call.allowed_tools:
+            self.reasoning_calls.append(call)
+            answer = self.reasoning.get(call.agent_id)
+            answer = answer(call.prompt) if callable(answer) else answer
+            if answer is None:
+                return RuntimeOutcome(ok=False, error="unavailable", detail="sem IA simulada")
+            return RuntimeOutcome(ok=True, structured=copy.deepcopy(answer))
         self.calls.append(call)
         if self.error:
             return RuntimeOutcome(ok=False, error=self.error, retry_after_s=30,  # type: ignore[arg-type]

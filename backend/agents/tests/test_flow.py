@@ -101,8 +101,9 @@ class FlowTest(unittest.TestCase):
 
     def test_catalog_lists_registered_agents(self):
         orch, *_ = make("x")
-        self.assertEqual([a["agent_id"] for a in orch.catalog()][:4],
-                         ["orchestrator", "researcher", "planner", "auditor"])
+        ids = [a["agent_id"] for a in orch.catalog()]
+        self.assertEqual(ids[:5], ["orchestrator", "researcher", "curator", "planner", "auditor"])
+        self.assertIn("customer_memory", ids)
 
 
 def second_message(orch, ctx, text):

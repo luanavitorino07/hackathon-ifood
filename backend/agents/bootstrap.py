@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from .auditor import Auditor
+from .curator import Curator
+from .customer_memory_agent import CustomerMemoryAgent
 from .discount import DiscountSpecialist
 from .orchestrator import Orchestrator
 from .planner import Planner
@@ -13,7 +15,8 @@ from .strategist import SalesStrategist
 
 def build_registry() -> AgentRegistry:
     registry = AgentRegistry()
-    for agent in (Researcher(), Planner(), Auditor(), SalesStrategist(), DiscountSpecialist()):
+    for agent in (Researcher(), Curator(), Planner(), Auditor(), SalesStrategist(), DiscountSpecialist(),
+                  CustomerMemoryAgent()):
         registry.register(agent)
     return registry
 

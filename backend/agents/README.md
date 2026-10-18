@@ -27,6 +27,24 @@ orch.catalog()       # list[dict] AgentDefinition, para GET /agents
 - Uma chamada por mensagem. Serialize chamadas da mesma sessão.
 - Do `initial_context` só são lidos `location`, `preferences` e `restrictions`.
 
+## IA nos agentes (`ai.py`) — raciocínio com guarda-corpo
+
+Os agentes conversam e **raciocinam com IA** pelo mesmo `AgentRuntimePort`, numa chamada **sem
+ferramentas** (`allowed_tools=()`, `max_tool_calls=0`) que pede JSON no `output_schema`. A resposta é
+validada; se a IA falhar, estourar cota ou sair do esquema, o agente usa a regra de reserva (o bot nunca
+trava). Cada consulta aparece no escritório como `tool_activity` `raciocinio_ia` (`internal`, ou `demo`).
+
+| Agente | IA decide | Guarda-corpo no código |
+|---|---|---|
+| Curador (`curator`) | se cada item do iFood é o que o cliente pediu ("Pastel de Pizza" não é pizza) | só julga itens que vieram da busca; sem IA, filtro por palavras |
+| Memória do cliente (`customer_memory`) | — (responde fatos) | histórico autorizado e preferências, com origem |
+| Estrategista | ordem das opções e argumento de venda, após **perguntar à Memória** e ler a estratégia (RAG) | só reordena opções aprovadas; argumento sem números |
+| Descontos | se sugere desconto e quanto, após **perguntar à Memória** e ler a política (RAG) | nunca acima do máximo da política; lucro calculado no código; nunca aplicado |
+| Orquestrador | texto final ao cliente | precisa citar restaurante e total exatos, sem outros valores, com os avisos |
+
+Planejador e auditor continuam por regra (dinheiro, orçamento, restrições, loja aberta, origem).
+**O runtime real precisa suportar a chamada sem ferramentas** (ver `ATUALIZACAO.md`); até lá, a reserva vale.
+
 ## Portas (`ports.py`) — quem implementa
 
 | Porta | Quem | Resumo |

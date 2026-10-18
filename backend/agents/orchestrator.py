@@ -1,6 +1,7 @@
 """Orquestrador: seleciona agentes pelo registro, coordena a esteira e emite os eventos."""
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -11,14 +12,21 @@ from .intent import (constraints_from_initial_context, extract_constraints, over
 from .models import AgentResult, AgentsOutput, Constraints, SessionContext, WorkingState, tag_requirements
 from .ports import (AgentRuntimePort, CustomerMemoryPort, CustomerProfile, EventSink, KnowledgePort,
                     MemoryPort, RevisionConflict)
+from .ai import ask
 from .failures import classify_failure
 from .relevance import food_terms
 from .resumption import reusable_offers, signature
 from .registry import Agent, AgentContext, AgentDefinition, AgentRegistry
 
+REPLY_SYSTEM = ("Você é o atendente simpático de um chatbot de comida. Reescreva a RESPOSTA_BASE de forma natural "
+                "e calorosa, em português do Brasil, em até 3 frases. Mantenha exatamente o nome do restaurante, os "
+                "itens, o valor total e TODOS os avisos (comece-os com 'Atenção:'); não invente preços, prazos ou "
+                "promoções; termine perguntando se o cliente quer confirmar o pedido.")
+REPLY_SCHEMA = {"type": "object", "required": ["resposta"], "properties": {"resposta": {"type": "string"}}}
+
 ORCHESTRATOR_DEFINITION = AgentDefinition(
     ORCHESTRATOR_ID, "Orquestrador", "Coordenação do atendimento",
-    "Conversa com o cliente, decide quais especialistas acionar e resolve conflitos", ["orchestration"])
+    "Conversa com o cliente (com IA), decide quais especialistas acionar e resolve conflitos", ["orchestration"])
 
 
 PRESENTED_RECOMMENDATIONS = 3
@@ -66,6 +74,10 @@ class Orchestrator:
         reuse = reusable_offers(self._memory.load(session.session_id).state, session, current_signature)
         if reuse is not None:  # só mudou quantidade/orçamento: replaneja sem nova busca
             state.offers, state.data_origin, why = reuse  # type: ignore[assignment]
+            curation = self._memory.load(session.session_id).state.get("curation")
+            if isinstance(curation, dict) and curation.get("signature") == current_signature:
+                state.ai_fit = {k: (v[0], v[1]) for k, v in (curation.get("fit") or {}).items()
+                                if isinstance(v, list) and len(v) == 2}
             events.agent_message(ORCHESTRATOR_ID, "researcher", new_id("task"), "resolution",
                                  f"Pesquisa reaproveitada, sem nova busca: {why}")
 
@@ -80,6 +92,9 @@ class Orchestrator:
             agent = pending[0]
             ran.add(agent.definition.agent_id)
             result = self._run_agent(agent, session, state, events)
+            if agent.definition.agent_id == "curator" and state.ai_fit:
+                self._persist(session.session_id, ORCHESTRATOR_ID, {"curation": {
+                    "signature": current_signature, "fit": {k: list(v) for k, v in state.ai_fit.items()}}})
             if agent.definition.agent_id == "researcher" and result.status == "done" and state.offers:
                 self._persist(session.session_id, ORCHESTRATOR_ID, {"last_search": {
                     "signature": current_signature, "at": time.time(), "count": len(state.offers)}})
@@ -173,7 +188,8 @@ class Orchestrator:
             elif not state.offers:
                 reason, ask = "Não encontrei ofertas disponíveis.", "Pode ajustar o pedido?"
             elif state.relevance_miss:
-                reason = f"Não encontrei \"{' '.join(state.query_terms)}\" disponível agora perto de você."
+                wanted = f"\"{' '.join(state.query_terms)}\"" if state.query_terms else "o que você pediu"
+                reason = f"Não encontrei {wanted} disponível agora perto de você."
                 ask = "Quer tentar outro prato ou descrever de outro jeito?"
             elif state.price_ceiling_cents is not None:
                 reason = ("Essa já é a opção mais barata que encontrei com o que você pediu "
@@ -201,12 +217,13 @@ class Orchestrator:
                         f"Recomendação principal: {best['merchant_name']}",
                         best["reasons"], limitations + best["warnings"])
         events.agent_status(ORCHESTRATOR_ID, "done", None, "Recomendação pronta")
-        text = self._reply_text(best, state.data_origin)
+        text = self._reply_text(best, state.data_origin, state.pitch)
+        text = self._ai_reply(state, best, text, events) or text
         events.assistant_message(text)
         return AgentsOutput("active", text, approved)
 
     @staticmethod
-    def _reply_text(rec: dict[str, Any], origin: str) -> str:
+    def _reply_text(rec: dict[str, Any], origin: str, pitch: str | None = None) -> str:
         items = ", ".join(f"{i['quantity']}x {i['name']}" for i in rec["items"])
         total = _brl(rec["total_cents"] if rec["total_cents"] is not None else rec["subtotal_cents"])
         text = f"Sugiro {rec['merchant_name']}: {items}. Total {total}"
@@ -215,12 +232,42 @@ class Orchestrator:
         liked = next((r for r in rec["reasons"] if r.startswith("Combina com sua preferência")), None)
         if liked:
             text += f". {liked}"
+        if pitch:
+            text += f". {pitch.rstrip('.')}"
         notes = [w for w in rec["warnings"]
                  if "não comprovada" in w or w.startswith("Taxa de serviço") or w.startswith("Não encontrei exatamente")]
         if notes:
             text += ". Atenção: " + "; ".join(notes)
         text += ". Deseja confirmar este pedido?"
         if origin == "demo":
+            text += " [dados de demonstração]"
+        return text
+
+    def _ai_reply(self, state: WorkingState, rec: dict[str, Any], fallback: str,
+                  events: EventEmitter) -> str | None:
+        """A IA reescreve a resposta de forma natural. Guarda-corpo: restaurante, total e avisos vêm do
+        código; a resposta da IA só vale se citar o restaurante e o total exatos e não trouxer outro valor."""
+        session = self._current
+        if session is None:
+            return None
+        total = _brl(rec["total_cents"] if rec["total_cents"] is not None else rec["subtotal_cents"])
+        allowed = {total} | {_brl(i["unit_price_cents"]) for i in rec["items"]}
+        ctx = AgentContext(session, state, self._runtime, events, new_id("task"), self._knowledge)
+        base = fallback.replace(" [dados de demonstração]", "")
+        answer = ask(ctx, ORCHESTRATOR_ID, REPLY_SYSTEM,
+                     f"Pedido do cliente: {session.message_text}\nRESPOSTA_BASE: {base}", REPLY_SCHEMA)
+        if answer is None:
+            return None
+        text = " ".join(answer["resposta"].split())
+        amounts = set(re.findall(r"R\$ ?\d+(?:[.,]\d{2})?", text))
+        normalized = {a.replace("R$", "R$ ").replace("  ", " ") for a in amounts}
+        notes = [w for w in rec["warnings"] if "não comprovada" in w or w.startswith("Taxa de serviço")
+                 or w.startswith("Não encontrei exatamente")]
+        if (len(text) > 600 or rec["merchant_name"] not in text or total not in text
+                or not normalized <= allowed or not text.endswith("?")
+                or any(n[:40] not in text for n in notes)):
+            return None  # fora do guarda-corpo: vale a resposta montada pelo código
+        if state.data_origin == "demo" and "[dados de demonstração]" not in text:
             text += " [dados de demonstração]"
         return text
 
