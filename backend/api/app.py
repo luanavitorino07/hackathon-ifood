@@ -130,6 +130,10 @@ def create_app(
     @app.exception_handler(IntegrationError)
     async def integration_error_handler(_: Request, exc: IntegrationError) -> JSONResponse:
         status_code = 429 if exc.code == "quota" else 503
+        if exc.code in {"STT_INVALID_AUDIO", "STT_NO_SPEECH"}:
+            status_code = 422
+        elif exc.code == "STT_BUSY":
+            status_code = 429
         return _error_response(
             status_code=status_code,
             code=exc.code.upper(),
@@ -210,6 +214,7 @@ def create_app(
         },
     )
     async def transcribe_audio(request: Request) -> TranscriptionResponse:
+        await _identity(request)
         provider: TranscriptionProvider | None = request.app.state.transcription_provider
         if provider is None:
             raise APIError(
@@ -235,7 +240,8 @@ def create_app(
                 "VALIDATION_ERROR",
                 "Envie um arquivo de áudio com language pt-BR.",
             )
-        if audio.content_type not in ALLOWED_AUDIO_TYPES:
+        content_type = (audio.content_type or "").split(";", 1)[0].strip().lower()
+        if content_type not in ALLOWED_AUDIO_TYPES:
             raise APIError(422, "UNSUPPORTED_AUDIO", "Formato de áudio não suportado.")
         content = await audio.read(MAX_AUDIO_BYTES + 1)
         if not content or len(content) > MAX_AUDIO_BYTES:
@@ -246,7 +252,7 @@ def create_app(
             )
         result = await provider.transcribe(
             content,
-            content_type=audio.content_type,
+            content_type=content_type,
             language="pt-BR",
         )
         return TranscriptionResponse(

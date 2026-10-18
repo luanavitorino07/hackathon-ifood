@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "PedIA",
+    "slug": "pedia-ifood",
+    "version": "1.0.0",
+    "web": {
+      "bundler": "metro"
+    },
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-font"
+    ]
+  }
+}

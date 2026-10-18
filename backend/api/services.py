@@ -66,6 +66,10 @@ class DemoIdentityResolver(DemoCustomerIdentityResolver):
         self._cookie_token = cookie_token or secrets.token_urlsafe(32)
 
     async def resolve(self, request: Request) -> RequestIdentity:
+        # The local buyer and office share one browser cookie jar. An explicit
+        # customer request must never inherit administrative event visibility.
+        if request.headers.get("x-demo-role") == "customer":
+            return await super().resolve(request)
         header_admin = request.headers.get("x-demo-role") == "admin"
         cookie_admin = hmac.compare_digest(
             request.cookies.get(self.cookie_name, ""),
