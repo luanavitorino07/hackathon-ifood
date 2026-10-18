@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
+from typing import Any
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI, Query, Request
@@ -64,10 +66,11 @@ def create_app(
     order_dispatcher: OrderDispatcher | None = None,
     agent_catalog: AgentCatalogProvider | None = None,
     transcription_provider: TranscriptionProvider | None = None,
+    memory: Any | None = None,
+    session_mode: Mode = Mode.DEMO,
 ) -> FastAPI:
     common_error_responses = {
-        status: {"model": HTTPErrorResponse}
-        for status in (400, 401, 403, 404, 409, 422, 429, 503)
+        status: {"model": HTTPErrorResponse} for status in (400, 401, 403, 404, 409, 422, 429, 503)
     }
     app = FastAPI(
         title="Escritório Virtual Multiagente",
@@ -80,6 +83,8 @@ def create_app(
     app.state.order_dispatcher = order_dispatcher
     app.state.agent_catalog = agent_catalog or EmptyAgentCatalog()
     app.state.transcription_provider = transcription_provider
+    app.state.memory = memory
+    app.state.session_mode = Mode(session_mode)
 
     @app.exception_handler(APIError)
     async def api_error_handler(_: Request, exc: APIError) -> JSONResponse:
@@ -92,9 +97,7 @@ def create_app(
         )
 
     @app.exception_handler(RequestValidationError)
-    async def validation_error_handler(
-        _: Request, exc: RequestValidationError
-    ) -> JSONResponse:
+    async def validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
         details = [
             ".".join(str(part) for part in error["loc"]) + ": " + error["msg"]
             for error in exc.errors()
@@ -108,9 +111,7 @@ def create_app(
         )
 
     @app.exception_handler(IntegrationError)
-    async def integration_error_handler(
-        _: Request, exc: IntegrationError
-    ) -> JSONResponse:
+    async def integration_error_handler(_: Request, exc: IntegrationError) -> JSONResponse:
         status_code = 429 if exc.code == "quota" else 503
         return _error_response(
             status_code=status_code,
@@ -120,9 +121,7 @@ def create_app(
         )
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_error_handler(
-        _: Request, exc: StarletteHTTPException
-    ) -> JSONResponse:
+    async def http_error_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
         codes = {
             401: "UNAUTHORIZED",
             403: "FORBIDDEN",
@@ -158,7 +157,13 @@ def create_app(
         return await _state(request).create_session(
             identity=identity,
             client_id=payload.client_id,
-            mode=Mode.DEMO,
+            mode=request.app.state.session_mode,
+            initial_context=(
+                payload.initial_context.model_dump(mode="json")
+                if payload.initial_context is not None
+                else None
+            ),
+            memory=request.app.state.memory,
         )
 
     @app.post(
@@ -245,6 +250,11 @@ def create_app(
         background_tasks: BackgroundTasks,
     ) -> ChatAcceptedResponse:
         identity = await _identity(request)
+        snapshot = await _state(request).snapshot(payload.session_id, identity)
+        initial_context = None
+        if request.app.state.memory is not None:
+            saved = await asyncio.to_thread(request.app.state.memory.load, payload.session_id)
+            initial_context = saved.state.get("initial_context")
         accepted = await _state(request).accept_message(payload, identity)
         client_id = await _state(request).session_client_id(payload.session_id, identity)
         background_tasks.add_task(
@@ -254,6 +264,8 @@ def create_app(
                 tenant_id=identity.tenant_id,
                 client_id=client_id,
                 request=payload,
+                mode=snapshot.session.mode,
+                initial_context=initial_context,
             ),
             identity,
         )
@@ -271,9 +283,7 @@ def create_app(
         "/api/v1/sessions/{session_id}/snapshot",
         response_model=SessionSnapshotResponse,
     )
-    async def session_snapshot(
-        session_id: str, request: Request
-    ) -> SessionSnapshotResponse:
+    async def session_snapshot(session_id: str, request: Request) -> SessionSnapshotResponse:
         return await _state(request).snapshot(session_id, await _identity(request))
 
     @app.get(

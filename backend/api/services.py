@@ -38,6 +38,15 @@ class DemoCustomerIdentityResolver:
         )
 
 
+class DemoIdentityResolver(DemoCustomerIdentityResolver):
+    """Perfis fictícios para demonstração local; não é autenticação real."""
+
+    async def resolve(self, request: Request) -> RequestIdentity:
+        if request.headers.get("x-demo-role") == "admin":
+            return RequestIdentity("tenant_demo", "manager_demo_1", "admin")
+        return await super().resolve(request)
+
+
 @dataclass(frozen=True, slots=True)
 class MessageDispatch:
     tenant_id: str
@@ -79,9 +88,7 @@ class OrchestratorDispatcher:
                 return
             identity = RequestIdentity(message.tenant_id, message.client_id, "customer")
             with self._event_sink.bind(identity):
-                outcome = await asyncio.to_thread(
-                    self._orchestrator.handle_message, context
-                )
+                outcome = await asyncio.to_thread(self._orchestrator.handle_message, context)
             await self._event_sink.set_session_status(
                 message.request.session_id,
                 identity,
@@ -182,6 +189,7 @@ class AgentServiceBundle:
     catalog: OrchestratorAgentCatalog
     event_sink: StateEventSink
     orchestrator: Any
+    memory: Any
 
 
 def build_agent_services(*, runtime: Any, memory: Any, state: Any) -> AgentServiceBundle:
@@ -199,24 +207,25 @@ def build_agent_services(*, runtime: Any, memory: Any, state: Any) -> AgentServi
         catalog=OrchestratorAgentCatalog(orchestrator),
         event_sink=event_sink,
         orchestrator=orchestrator,
+        memory=memory,
     )
 
 
-def build_demo_agent_services(*, runtime: Any, state: Any) -> AgentServiceBundle:
+def build_demo_agent_services(
+    *, runtime: Any, state: Any, memory: Any | None = None
+) -> AgentServiceBundle:
     """Compõe o MVP com a memória efêmera declarada pela branch de agentes."""
 
     fakes = import_module("backend.agents.testing.fakes")
     return build_agent_services(
         runtime=runtime,
-        memory=fakes.InMemoryMemory(),
+        memory=memory if memory is not None else fakes.InMemoryMemory(),
         state=state,
     )
 
 
 class OrderDispatcher(Protocol):
-    async def dispatch(
-        self, request: SubmitOrderRequest, identity: RequestIdentity
-    ) -> None: ...
+    async def dispatch(self, request: SubmitOrderRequest, identity: RequestIdentity) -> None: ...
 
 
 class AgentCatalogProvider(Protocol):

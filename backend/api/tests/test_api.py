@@ -47,7 +47,7 @@ class _AgentCatalog:
         ]
 
 
-def test_session_contract_rejects_unapproved_initial_context() -> None:
+def test_session_contract_rejects_incomplete_initial_context() -> None:
     with pytest.raises(ValidationError):
         SessionCreateRequest.model_validate(
             {
@@ -114,9 +114,7 @@ def test_state_is_idempotent_and_filters_admin_events() -> None:
         state = InMemoryBackendState()
         customer = RequestIdentity("tenant_demo", "client_demo_1", "customer")
         admin = RequestIdentity("tenant_demo", "admin_demo", "admin")
-        session = await state.create_session(
-            identity=customer, client_id="client_demo_1"
-        )
+        session = await state.create_session(identity=customer, client_id="client_demo_1")
         message = ChatMessageRequest(
             session_id=session.session_id,
             client_message_id="msg_1",
@@ -143,12 +141,8 @@ def test_state_is_idempotent_and_filters_admin_events() -> None:
             },
         )
 
-        customer_history = await state.history(
-            session.session_id, customer, after_seq=0, limit=200
-        )
-        admin_history = await state.history(
-            session.session_id, admin, after_seq=0, limit=200
-        )
+        customer_history = await state.history(session.session_id, customer, after_seq=0, limit=200)
+        admin_history = await state.history(session.session_id, admin, after_seq=0, limit=200)
 
         assert first == second
         assert [event.type for event in customer_history.events] == [
@@ -164,9 +158,7 @@ def test_http_flow_accepts_message_and_emits_honest_runtime_error() -> None:
     async def scenario() -> None:
         app = create_app()
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://testserver"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             session_response = await client.post(
                 "/api/v1/sessions", json={"client_id": "client_demo_1"}
             )
@@ -193,9 +185,7 @@ def test_http_flow_accepts_message_and_emits_honest_runtime_error() -> None:
             assert history.status_code == 200
             event_types = [event["type"] for event in history.json()["events"]]
             assert event_types == ["session_started", "chat_message", "error"]
-            assert history.json()["events"][-1]["payload"]["code"] == (
-                "RUNTIME_UNAVAILABLE"
-            )
+            assert history.json()["events"][-1]["payload"]["code"] == ("RUNTIME_UNAVAILABLE")
 
     asyncio.run(scenario())
 
@@ -204,12 +194,10 @@ def test_http_errors_use_the_common_contract() -> None:
     async def scenario() -> None:
         app = create_app()
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://testserver"
-        ) as client:
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             invalid = await client.post(
                 "/api/v1/sessions",
-                json={"client_id": "client_demo_1", "initial_context": None},
+                json={"client_id": "client_demo_1", "unknown": None},
             )
             assert invalid.status_code == 422
             assert set(invalid.json()) == {"schema_version", "request_id", "error"}
@@ -240,13 +228,13 @@ def test_openapi_contains_all_public_v1_routes_and_payload_schemas() -> None:
     office_event = schema["components"]["schemas"]["OfficeEvent"]
     payload_schema = office_event["properties"]["payload"]
     assert "anyOf" in payload_schema
-    audio_content = schema["paths"]["/api/v1/audio/transcriptions"]["post"][
-        "requestBody"
-    ]["content"]
+    audio_content = schema["paths"]["/api/v1/audio/transcriptions"]["post"]["requestBody"][
+        "content"
+    ]
     assert "multipart/form-data" in audio_content
-    event_content = schema["paths"]["/api/v1/sessions/{session_id}/events"]["get"][
-        "responses"
-    ]["200"]["content"]
+    event_content = schema["paths"]["/api/v1/sessions/{session_id}/events"]["get"]["responses"][
+        "200"
+    ]["content"]
     assert "text/event-stream" in event_content
 
 

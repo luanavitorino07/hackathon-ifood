@@ -20,9 +20,7 @@ PositiveInt = Annotated[int, Field(gt=0)]
 
 
 class StrictModel(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid", use_enum_values=True, populate_by_name=True
-    )
+    model_config = ConfigDict(extra="forbid", use_enum_values=True, populate_by_name=True)
 
 
 class Mode(str, Enum):
@@ -257,9 +255,7 @@ class CartChangedPayload(StrictModel):
 
 class OrderStatusChangedPayload(StrictModel):
     order_id: NonEmptyStr | None
-    status: Literal[
-        "not_submitted", "submitted", "payment_pending", "confirmed", "failed"
-    ]
+    status: Literal["not_submitted", "submitted", "payment_pending", "confirmed", "failed"]
     summary: NonEmptyStr
 
 
@@ -347,8 +343,17 @@ class OfficeEvent(StrictModel):
         return self
 
 
+class InitialContext(StrictModel):
+    name: NonEmptyStr | None
+    age: Annotated[int, Field(strict=True, ge=0, le=130)] | None
+    location: NonEmptyStr | None
+    preferences: list[NonEmptyStr]
+    restrictions: list[NonEmptyStr]
+
+
 class SessionCreateRequest(StrictModel):
     client_id: NonEmptyStr | None
+    initial_context: InitialContext | None = None
 
 
 class SessionCreateResponse(StrictModel):

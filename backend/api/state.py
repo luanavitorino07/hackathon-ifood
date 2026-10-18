@@ -68,6 +68,8 @@ class InMemoryBackendState:
         identity: RequestIdentity,
         client_id: str | None,
         mode: Mode = Mode.DEMO,
+        initial_context: dict[str, Any] | None = None,
+        memory: Any | None = None,
     ) -> SessionCreateResponse:
         if identity.role != "customer":
             raise APIError(403, "FORBIDDEN", "Apenas compradores podem criar sessões.")
@@ -78,6 +80,16 @@ class InMemoryBackendState:
         now = _utcnow()
         async with self._condition:
             session_id = f"sess_{uuid4().hex}"
+            if initial_context is not None:
+                if memory is None:
+                    raise APIError(503, "MEMORY_UNAVAILABLE", "A memória não está configurada.")
+                await asyncio.to_thread(
+                    memory.save_patch,
+                    session_id,
+                    {"initial_context": initial_context},
+                    expected_revision=0,
+                    author="api",
+                )
             alias = f"Cliente #{len(self._records) + 1}"
             record = _SessionRecord(
                 session_id=session_id,
@@ -174,9 +186,7 @@ class InMemoryBackendState:
             self._condition.notify_all()
             return event
 
-    async def snapshot(
-        self, session_id: str, identity: RequestIdentity
-    ) -> SessionSnapshotResponse:
+    async def snapshot(self, session_id: str, identity: RequestIdentity) -> SessionSnapshotResponse:
         async with self._condition:
             record = self._require_access_locked(session_id, identity)
             agents = list(record.agents.values()) if identity.role == "admin" else []
@@ -247,14 +257,9 @@ class InMemoryBackendState:
             ]
             now = _utcnow()
             messages_received = sum(
-                1
-                for record in records
-                for message in record.messages
-                if message.role == "customer"
+                1 for record in records for message in record.messages if message.role == "customer"
             )
-            recommendations_made = sum(
-                len(record.recommendations) for record in records
-            )
+            recommendations_made = sum(len(record.recommendations) for record in records)
             orders_submitted = sum(
                 1
                 for record in records
@@ -271,7 +276,7 @@ class InMemoryBackendState:
             )
             recent = sorted(records, key=lambda item: item.updated_at, reverse=True)[:20]
             return AdminOverviewResponse(
-                mode=Mode.DEMO,
+                mode=Mode.REAL if any(r.mode == "real" for r in records) else Mode.DEMO,
                 window=OverviewWindow(from_=now - timedelta(days=1), to=now),
                 metrics=OverviewMetrics(
                     sessions_started=len(records),
@@ -297,9 +302,7 @@ class InMemoryBackendState:
                 ],
             )
 
-    async def session_client_id(
-        self, session_id: str, identity: RequestIdentity
-    ) -> str:
+    async def session_client_id(self, session_id: str, identity: RequestIdentity) -> str:
         async with self._condition:
             return self._require_access_locked(session_id, identity).client_id
 
@@ -316,9 +319,7 @@ class InMemoryBackendState:
             record.updated_at = _utcnow()
             self._condition.notify_all()
 
-    def _require_access_locked(
-        self, session_id: str, identity: RequestIdentity
-    ) -> _SessionRecord:
+    def _require_access_locked(self, session_id: str, identity: RequestIdentity) -> _SessionRecord:
         record = self._records.get(session_id)
         if record is None:
             raise APIError(404, "SESSION_NOT_FOUND", "Sessão não encontrada.")
@@ -366,8 +367,7 @@ class InMemoryBackendState:
             record.agents[runtime.agent_id] = runtime
         elif event.type == EventType.RECOMMENDATIONS_READY.value:
             record.recommendations = [
-                Recommendation.model_validate(item)
-                for item in payload["recommendations"]
+                Recommendation.model_validate(item) for item in payload["recommendations"]
             ]
         elif event.type == EventType.CART_CHANGED.value:
             record.cart = Cart.model_validate(payload["cart"])
