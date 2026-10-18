@@ -13,16 +13,66 @@ import * as Crypto from "expo-crypto";
 import { api, ApiError, mocked } from "../services/api";
 import { useSession } from "../hooks/useSession";
 import { useAudioRecorder } from "../hooks/useAudioRecorder";
-import { Badge, Button, Card, Offer } from "../components/ui";
-import { styles as s, money } from "../theme";
+import { Badge, Button, Card, Offer, Pill } from "../components/ui";
+import { colors, styles as s, money } from "../theme";
 import type {
+  ChatMessage,
   ChatMessageRequest,
   Recommendation,
   SubmitOrderRequest,
 } from "../types/api";
 import { LinearGradient } from "expo-linear-gradient";
-import { Icon, brandGradient } from "../components/Brand";
+import { BrandGradient, Icon, brandGradient } from "../components/Brand";
+
 const client = api();
+const GREETING =
+  "Oi! Eu sou a PedIA 😊 Me conta o que você quer comer, para quantas pessoas e o orçamento, que eu encontro a melhor opção no iFood.";
+
+function time(iso: string) {
+  return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function Bubble({ message }: { message: Pick<ChatMessage, "role" | "text" | "input_mode"> & { created_at?: string } }) {
+  const mine = message.role === "customer";
+  const meta = `${message.input_mode === "audio" ? "Áudio transcrito · " : ""}${message.created_at ? time(message.created_at) : ""}`;
+  return (
+    <LinearGradient
+      colors={mine ? brandGradient : ["#F4F4F5", "#F4F4F5"]}
+      style={[
+        s.bubble,
+        {
+          alignSelf: mine ? "flex-end" : "flex-start",
+          maxWidth: "86%",
+          borderTopRightRadius: mine ? 4 : 20,
+          borderTopLeftRadius: mine ? 20 : 4,
+          paddingVertical: 12,
+          paddingHorizontal: 16,
+          gap: 4,
+        },
+      ]}
+    >
+      <Text style={[s.text, { fontSize: 16, lineHeight: 23, color: mine ? "#FFFFFF" : colors.ink }]}>
+        {message.text}
+      </Text>
+      {!!meta && (
+        <Text style={[s.muted, { fontSize: 12, lineHeight: 16, color: mine ? "#FFE3E4" : "#9A9A9A" }]}>{meta}</Text>
+      )}
+    </LinearGradient>
+  );
+}
+
+function Typing() {
+  return (
+    <View
+      accessibilityLabel="PedIA está analisando seu pedido"
+      style={[s.bubble, { alignSelf: "flex-start", backgroundColor: "#F4F4F5", borderTopLeftRadius: 4, paddingVertical: 12, flexDirection: "row", alignItems: "center", gap: 10 }]}
+    >
+      <ActivityIndicator size="small" color={colors.red} />
+      <Text style={[s.muted, { fontSize: 14 }]}>Os agentes estão pesquisando e analisando seu pedido…</Text>
+    </View>
+  );
+}
+
 export function ChatScreen({ onBack }: { onBack: () => void }) {
   const [id, setId] = useState<string | null>(null),
     [text, setText] = useState(""),
@@ -36,6 +86,7 @@ export function ChatScreen({ onBack }: { onBack: () => void }) {
   const pending = useRef<ChatMessageRequest | null>(null);
   const action = useRef<SubmitOrderRequest | null>(null);
   const { snapshot, events, error: syncError, loading } = useSession(id);
+
   async function create(fresh = false) {
     setBusy(true);
     try {
@@ -57,6 +108,8 @@ export function ChatScreen({ onBack }: { onBack: () => void }) {
       }
       setReview(null);
       setAccepted(false);
+      setText("");
+      setTranscription(null);
       pending.current = null;
       action.current = null;
       setError("");
@@ -69,6 +122,7 @@ export function ChatScreen({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     void create();
   }, []);
+
   async function send(retry = false) {
     if (!id || (!retry && !text.trim())) return;
     setBusy(true);
@@ -114,17 +168,10 @@ export function ChatScreen({ onBack }: { onBack: () => void }) {
     setBusy(true);
     setError("");
     try {
-      const pick = await DocumentPicker.getDocumentAsync({
-        type: "audio/*",
-        copyToCacheDirectory: true,
-      });
+      const pick = await DocumentPicker.getDocumentAsync({ type: "audio/*", copyToCacheDirectory: true });
       if (pick.canceled) return;
       const file = pick.assets[0];
-      await transcribe(
-        file.uri,
-        file.name,
-        file.mimeType || "audio/mp4",
-      );
+      await transcribe(file.uri, file.name, file.mimeType || "audio/mp4");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -152,164 +199,125 @@ export function ChatScreen({ onBack }: { onBack: () => void }) {
       setBusy(false);
     }
   }
+
+  const messages = snapshot?.messages ?? [];
+  const waiting = messages.at(-1)?.role === "customer";
+  const lastAssistant = messages.map((m) => m.role).lastIndexOf("assistant");
   const order = events.filter((e) => e.type === "order_status_changed").at(-1);
   const eventError = events.filter((e) => e.type === "error").at(-1);
+  const recommendations = snapshot?.recommendations ?? [];
+  const offers = (
+    <View style={{ gap: 14 }}>
+      {recommendations.map((r, index) => (
+        <Offer
+          key={r.recommendation_id}
+          offer={r}
+          highlight={index === 0 && recommendations.length > 1}
+          onSelect={
+            snapshot?.session.status === "closed"
+              ? undefined
+              : () => {
+                  setReview(r);
+                  action.current = null;
+                }
+          }
+        />
+      ))}
+    </View>
+  );
+
   return (
-    <View
-      style={[
-        s.page,
-        {
-          maxWidth: 520,
-          width: "100%",
-          alignSelf: "center",
-          borderColor: "#eee",
-          borderWidth: 1,
-        },
-      ]}
-    >
+    <View style={[s.page, { maxWidth: 560, width: "100%", alignSelf: "center", borderColor: "#eee", borderLeftWidth: 1, borderRightWidth: 1 }]}>
       <View
-        style={[
-          s.card,
-          {
-            borderRadius: 0,
-            flexDirection: "row",
-            alignItems: "center",
-            minHeight: 82,
-            borderWidth: 0,
-            borderBottomWidth: 1,
-            paddingHorizontal: 20,
-            gap: 14,
-          },
-        ]}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          minHeight: 72,
+          borderBottomWidth: 1,
+          borderColor: colors.line,
+          paddingHorizontal: 16,
+          gap: 12,
+          backgroundColor: colors.paper,
+        }}
       >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Abrir escritório"
-          onPress={onBack}
-        >
-          <Icon name="back" color="#ff161e" size={26} />
+        <Pressable accessibilityRole="button" accessibilityLabel="Abrir escritório" onPress={onBack} hitSlop={10}>
+          <Icon name="back" color="#ff161e" size={22} />
         </Pressable>
-        <View
-          style={[
-            s.icon,
-            {
-              width: 44,
-              height: 44,
-              backgroundColor: "#e5e5e5",
-              borderRadius: 30,
-            },
-          ]}
-        ></View>
-        <Text style={s.heading}>PedIA</Text>
-        <View style={{ flex: 1 }} />
-        <Icon name="more" color="#777" size={19} />
-        {snapshot && (
-          <Badge
-            text={
-              snapshot.session.mode === "demo" ? "Demonstração" : "Conectado"
-            }
-          />
+        <BrandGradient style={{ width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" }}>
+          <Text style={{ fontFamily: "InterBold", fontSize: 18, color: "#FFFFFF" }}>P</Text>
+        </BrandGradient>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={[s.heading, { fontSize: 19, lineHeight: 24 }]}>PedIA</Text>
+            {snapshot && (
+              <Pill
+                text={snapshot.session.mode === "demo" ? "Demo" : "Online"}
+                tone={snapshot.session.mode === "demo" ? "amber" : "green"}
+              />
+            )}
+          </View>
+          <Text numberOfLines={1} style={[s.muted, { fontSize: 13, lineHeight: 17 }]}>
+            {waiting ? "analisando seu pedido…" : "assistente de pedidos do iFood"}
+          </Text>
+        </View>
+        {id && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Novo atendimento"
+            onPress={() => void create(true)}
+            disabled={busy || recording}
+            hitSlop={10}
+            style={({ pressed }) => ({
+              opacity: busy || recording ? 0.4 : pressed ? 0.6 : 1,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+              paddingHorizontal: 10,
+              paddingVertical: 7,
+              borderRadius: 18,
+              backgroundColor: colors.redSoft,
+            })}
+          >
+            <Icon name="plus" size={12} color={colors.red} />
+            <Text style={{ fontFamily: "InterMedium", fontSize: 13, color: colors.red }}>Novo</Text>
+          </Pressable>
         )}
       </View>
+
       <ScrollView
         ref={scroll}
         onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: true })}
-        contentContainerStyle={[
-          s.content,
-          { padding: 22, paddingTop: 28, gap: 28 },
-        ]}
+        contentContainerStyle={{ padding: 16, paddingTop: 20, gap: 12, flexGrow: 1 }}
       >
-        {loading && <ActivityIndicator color="#ff343e" />}
-        {snapshot?.messages.at(-1)?.role === "customer" && (
-          <Text style={s.muted}>Pesquisando e analisando seu pedido…</Text>
-        )}
-        {!snapshot?.messages.length && (
-          <Text style={s.text}>
-            Oi! Vou te ajudar a encontrar uma opção dentro do seu orçamento. O
-            que você gostaria de pedir?
-          </Text>
-        )}
-        {snapshot?.messages.map((m) => (
-          <LinearGradient
-            colors={
-              m.role === "customer"
-                ? brandGradient
-                : ["transparent", "transparent"]
-            }
-            key={m.message_id}
-            style={[
-              s.bubble,
-              {
-                alignSelf: m.role === "customer" ? "flex-end" : "flex-start",
-                borderTopRightRadius: m.role === "customer" ? 0 : 19,
-                padding: m.role === "customer" ? 15 : 0,
-                maxWidth: m.role === "customer" ? "80%" : "92%",
-              },
-            ]}
-          >
-            <Text
-              style={[
-                s.text,
-                { color: m.role === "customer" ? "white" : "#373737" },
-              ]}
-            >
-              {m.text}
-            </Text>
-            <Text
-              style={[
-                s.muted,
-                { color: m.role === "customer" ? "#fff" : "#888" },
-              ]}
-            >
-              {m.input_mode === "audio" ? "Áudio transcrito · " : ""}
-              {new Date(m.created_at).toLocaleTimeString("pt-BR", {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </Text>
-          </LinearGradient>
+        <Bubble message={{ role: "assistant", text: GREETING, input_mode: "text" }} />
+        {loading && !snapshot && <ActivityIndicator color={colors.red} />}
+        {messages.map((m, index) => (
+          <React.Fragment key={m.message_id}>
+            <Bubble message={m} />
+            {index === lastAssistant && recommendations.length > 0 && offers}
+          </React.Fragment>
         ))}
-        {snapshot?.recommendations.map((r) => (
-          <Offer
-            key={r.recommendation_id}
-            offer={r}
-            onSelect={
-              snapshot.session.status === "closed"
-                ? undefined
-                : () => {
-                    setReview(r);
-                    action.current = null;
-                  }
-            }
-          />
-        ))}
+        {lastAssistant < 0 && recommendations.length > 0 && offers}
+        {waiting && <Typing />}
         {review && (
-          <Card title="Confirmar submissão">
+          <Card title="Confirmar pedido">
             <Text style={s.text}>
               {review.merchant_name} · {money(review.total_cents)}
             </Text>
-            <Text style={s.text}>
+            <Text style={s.muted}>
               {snapshot?.session.mode === "demo"
                 ? "Este pedido será apenas simulado."
-                : "O MVP recomenda opções, mas o envio real do pedido ainda não está disponível. Nenhum pagamento será executado."}
+                : "A PedIA recomenda a melhor opção; o envio real do pedido ao iFood ainda não está disponível. Nenhum pagamento será feito."}
             </Text>
             <Button
               title="Confirmar e submeter pedido"
               onPress={() => void submit()}
               disabled={busy || (!mocked && snapshot?.session.mode === "real")}
             />
-            <Button
-              title="Voltar"
-              onPress={() => setReview(null)}
-              disabled={busy}
-            />
+            <Button title="Voltar" variant="ghost" onPress={() => setReview(null)} disabled={busy} />
           </Card>
         )}
-        {accepted && !order && (
-          <Text style={s.text}>
-            Solicitação aceita. Aguardando o resultado do pedido…
-          </Text>
-        )}
+        {accepted && !order && <Text style={s.muted}>Solicitação aceita. Aguardando o resultado do pedido…</Text>}
         {order?.type === "order_status_changed" && (
           <Card title="Status do pedido">
             <Badge text={order.payload.status} />
@@ -317,104 +325,78 @@ export function ChatScreen({ onBack }: { onBack: () => void }) {
           </Card>
         )}
         {snapshot?.cart && (
-          <Text style={s.text}>
-            Carrinho: {snapshot.cart.status} ·{" "}
-            {money(snapshot.cart.total_cents)}
+          <Text style={s.muted}>
+            Carrinho: {snapshot.cart.status} · {money(snapshot.cart.total_cents)}
           </Text>
         )}
-        {eventError?.type === "error" && (
-          <Text style={s.error}>{eventError.payload.message}</Text>
-        )}
-        {(error || syncError) && (
+        {eventError?.type === "error" && !waiting && <Text style={s.error}>{eventError.payload.message}</Text>}
+        {!!(error || syncError) && (
           <Text accessibilityRole="alert" style={s.error}>
             {error || syncError}
           </Text>
         )}
         {pending.current && (
-          <Button
-            title="Tentar o mesmo envio novamente"
-            disabled={busy}
-            onPress={() => void send(true)}
-          />
-        )}{" "}
-        {!id && (
-          <Button
-            title="Conectar novamente"
-            onPress={() => void create()}
-            disabled={busy}
-          />
+          <Button title="Tentar o mesmo envio novamente" disabled={busy} onPress={() => void send(true)} />
         )}
+        {!id && <Button title="Conectar novamente" onPress={() => void create()} disabled={busy} />}
       </ScrollView>
-      <View style={{ padding: 20, paddingBottom: 28, gap: 10 }}>
+
+      <View style={{ padding: 12, paddingBottom: 16, gap: 8, borderTopWidth: 1, borderColor: colors.line }}>
         {transcribing && <Text style={s.muted}>Transcrevendo áudio… aguarde e revise o texto.</Text>}
-        {recording && <Text style={s.muted}>Gravando… toque novamente no microfone para finalizar.</Text>}
-        {id && <Button title="Novo atendimento" onPress={() => void create(true)} disabled={busy || recording} />}
-        {transcription && (
-          <>
-            <Badge
-              text={
-                mocked
-                  ? "Transcrição simulada — revise o texto"
-                  : "Revise a transcrição antes de enviar"
-              }
-            />
-            <Button
-              title="Descartar transcrição"
+        {recording && <Text style={[s.muted, { color: colors.red }]}>● Gravando… toque no microfone para finalizar.</Text>}
+        {!!transcription && (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <Pill text={mocked ? "Transcrição simulada — revise" : "Revise a transcrição antes de enviar"} tone="amber" />
+            <Pressable
+              accessibilityRole="button"
               onPress={() => {
                 setTranscription(null);
                 setText("");
               }}
-            />
-          </>
+            >
+              <Text style={{ fontFamily: "InterMedium", fontSize: 13, color: colors.red }}>Descartar</Text>
+            </Pressable>
+          </View>
         )}
-        <View
-          style={[s.row, { alignItems: "center", gap: 8, flexWrap: "nowrap" }]}
-        >
+        <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 8 }}>
           <TextInput
             accessibilityLabel="Mensagem"
-            placeholder="Inicie uma conversa com a PedIA…"
+            placeholder="Escreva seu pedido…"
             value={text}
             onChangeText={setText}
             multiline
             editable={!busy && !recording}
-            placeholderTextColor="#cfcfcf"
-            style={[
-              s.input,
-              {
-                flex: 1,
-                minWidth: 80,
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.1,
-                shadowRadius: 3,
-                elevation: 2,
-              },
-            ]}
+            placeholderTextColor="#B5B5B5"
+            onKeyPress={(e) => {
+              const key = e.nativeEvent as unknown as { key: string; shiftKey?: boolean };
+              if (Platform.OS === "web" && key.key === "Enter" && !key.shiftKey) {
+                (e as unknown as { preventDefault: () => void }).preventDefault?.();
+                void send();
+              }
+            }}
+            style={[s.input, { flex: 1, minWidth: 0, fontSize: 16, maxHeight: 120 }]}
           />
           <Button
             title="Enviar arquivo de áudio"
             icon={Platform.OS === "web" ? "file" : "mic"}
+            variant="ghost"
             onPress={() => void audio()}
             disabled={busy || !id || recording}
           />
-          {Platform.OS === "web" && <Button
-            title={recording ? "Finalizar gravação" : "Gravar áudio"}
-            icon="mic"
-            onPress={() => void toggleRecording()}
-            disabled={busy || !id}
-          />}
+          {Platform.OS === "web" && (
+            <Button
+              title={recording ? "Finalizar gravação" : "Gravar áudio"}
+              icon="mic"
+              variant={recording ? "primary" : "ghost"}
+              onPress={() => void toggleRecording()}
+              disabled={busy || !id}
+            />
+          )}
           <Button
             title={busy ? "Enviando" : transcription ? "Confirmar texto e enviar" : "Enviar"}
             icon="send"
             onPress={() => void send()}
-            disabled={
-              busy ||
-              recording ||
-              !id ||
-              !text.trim() ||
-              snapshot?.session.status === "closed" ||
-              !!pending.current
-            }
+            disabled={busy || recording || !id || !text.trim() || snapshot?.session.status === "closed" || !!pending.current}
           />
         </View>
       </View>

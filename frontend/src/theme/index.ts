@@ -7,7 +7,41 @@ export const colors = {
   line: "#E8E8E8",
   paper: "#FFFFFF",
   soft: "#FAFAFA",
+  green: "#13A538",
+  greenSoft: "#E9F8EC",
+  amber: "#E58A00",
+  amberSoft: "#FFF4E0",
+  blue: "#2F6FDE",
+  blueSoft: "#EAF1FD",
+  redSoft: "#FFF0F1",
 };
+
+// Rótulos em português para estados que chegam crus da API.
+export const agentStatusLabel: Record<string, string> = {
+  idle: "Ocioso",
+  running: "Trabalhando",
+  waiting: "Aguardando",
+  done: "Concluído",
+  error: "Com erro",
+};
+
+export const sessionStatusLabel: Record<string, string> = {
+  active: "Em andamento",
+  waiting_customer: "Aguardando cliente",
+  closed: "Encerrado",
+  error: "Com erro",
+};
+
+export function relativeTime(iso: string, now = Date.now()): string {
+  const seconds = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
+  if (seconds < 45) return "agora";
+  if (seconds < 3600) return `há ${Math.round(seconds / 60)} min`;
+  if (seconds < 86400) return `há ${Math.round(seconds / 3600)} h`;
+  return new Date(iso).toLocaleDateString("pt-BR");
+}
+
+export const percent = (value: number | null | undefined) =>
+  value == null || !isFinite(value) ? "—" : `${Math.round(value * 100)}%`;
 
 // Controle os tamanhos gerais aqui.
 export const fontSizes = {
@@ -138,8 +172,8 @@ export const styles = StyleSheet.create({
   },
 
   side: {
-    width: 180,
-    padding: 20,
+    width: 224,
+    padding: 16,
     paddingTop: 28,
     gap: 30,
     borderTopRightRadius: 20,

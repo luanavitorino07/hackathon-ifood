@@ -33,9 +33,7 @@ export function applyEvent(
     case "session_closed":
       next.session.status = "closed";
       break;
-    case "error":
-      next.session.status = "error";
-      break;
+    // "error" não encerra o atendimento: o status vem do snapshot do backend.
   }
   return next;
 }
