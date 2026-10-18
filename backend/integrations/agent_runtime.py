@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from importlib import import_module
 from time import monotonic
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from .config import OpenCodeSettings, SandboxLocation
 from .errors import (
@@ -83,6 +83,12 @@ class _ExecutionResult:
     detail: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedLocation:
+    coordinates: dict[str, float]
+    source: Literal["context", "sandbox"]
+
+
 class OpenCodeAgentRuntime:
     """Implementa estruturalmente ``AgentRuntimePort.run``.
 
@@ -133,9 +139,10 @@ class OpenCodeAgentRuntime:
         if call.max_tool_calls < 1:
             return _failure("invalid_output", "tool_call_limit")
 
-        location = _resolve_location(call.context, self._sandbox_location)
-        if location is None:
+        resolved_location = _resolve_location(call.context, self._sandbox_location)
+        if resolved_location is None:
             return _failure("unavailable", "location_required")
+        location = resolved_location.coordinates
         dietary = _read_dietary_filters(call.context)
         client = self._client_factory()
         started_at = monotonic()
@@ -174,12 +181,17 @@ class OpenCodeAgentRuntime:
                 provider="ifood_mcp",
                 status="succeeded",
                 duration_ms=duration_ms,
-                summary=f"Busca MCP concluída com {len(offers)} oferta(s).",
+                summary=_trace_summary(len(offers), resolved_location.source),
             )
             return _ExecutionResult(
                 ok=True,
                 structured={"offers": offers},
                 traces=(trace,),
+                detail=(
+                    "sandbox_location_used"
+                    if resolved_location.source == "sandbox"
+                    else None
+                ),
             )
         except IntegrationError as exc:
             retry_after = 30 if isinstance(exc, QuotaError) else None
@@ -231,16 +243,29 @@ def _safe_detail(exc: IntegrationError) -> str:
 
 def _resolve_location(
     context: Mapping[str, Any], fallback: SandboxLocation | None
-) -> dict[str, float] | None:
+) -> _ResolvedLocation | None:
     raw = context.get("location")
     if isinstance(raw, Mapping):
         latitude = raw.get("latitude")
         longitude = raw.get("longitude")
         if _coordinate(latitude, -90, 90) and _coordinate(longitude, -180, 180):
-            return {"latitude": float(latitude), "longitude": float(longitude)}
+            return _ResolvedLocation(
+                {"latitude": float(latitude), "longitude": float(longitude)},
+                "context",
+            )
     if fallback is not None:
-        return {"latitude": fallback.latitude, "longitude": fallback.longitude}
+        return _ResolvedLocation(
+            {"latitude": fallback.latitude, "longitude": fallback.longitude},
+            "sandbox",
+        )
     return None
+
+
+def _trace_summary(offer_count: int, location_source: str) -> str:
+    summary = f"Busca MCP concluída com {offer_count} oferta(s)."
+    if location_source == "sandbox":
+        return f"{summary} Localização de sandbox utilizada."
+    return summary
 
 
 def _coordinate(value: Any, minimum: float, maximum: float) -> bool:

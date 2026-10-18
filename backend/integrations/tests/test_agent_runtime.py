@@ -104,7 +104,14 @@ def test_runtime_maps_raw_mcp_output_and_ignores_model_structured_output() -> No
         client_factory=lambda: client,
     )
 
-    result = asyncio.run(runtime._execute(_call(dietary_filters=["VEGETARIAN"])))
+    result = asyncio.run(
+        runtime._execute(
+            _call(
+                location="São Paulo, SP",
+                dietary_filters=["VEGETARIAN"],
+            )
+        )
+    )
 
     assert result.ok is True
     assert result.structured == {
@@ -124,6 +131,8 @@ def test_runtime_maps_raw_mcp_output_and_ignores_model_structured_output() -> No
     }
     assert result.traces[0].provider == "ifood_mcp"
     assert result.traces[0].status == "succeeded"
+    assert result.detail == "sandbox_location_used"
+    assert "Localização de sandbox utilizada" in result.traces[0].summary
     assert client.prompt_kwargs["tools"] == {
         "bash": False,
         "ifood_searchOffers": True,
@@ -194,6 +203,8 @@ def test_runtime_accepts_coordinates_from_internal_context() -> None:
     )
 
     assert result.ok is True
+    assert result.detail is None
+    assert "sandbox" not in result.traces[0].summary.lower()
     assert '"latitude": -22.9' in client.prompt_kwargs["prompt"]
 
 
