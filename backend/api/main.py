@@ -22,6 +22,7 @@ from typing import Any
 from fastapi import FastAPI
 
 from backend.integrations import OpenCodeAgentRuntime, OpenCodeSettings, SandboxLocation
+from backend.integrations.local_transcription import transcription_from_env
 
 from .app import create_app
 from .models import Mode
@@ -73,6 +74,7 @@ def build_application(
     if callable(detail_lookup):
         services.event_sink.catalog_detail_lookup = detail_lookup
     application = create_app(
+        transcription_provider=transcription_from_env(),
         state=backend_state,
         message_dispatcher=services.dispatcher,
         agent_catalog=services.catalog,
