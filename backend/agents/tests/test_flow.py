@@ -324,6 +324,72 @@ class CommercialTest(unittest.TestCase):
         self.assertEqual(len(keys), len({str(k) for k in keys}))
 
 
+class _FakeKB:
+    def __init__(self, hits):
+        self.hits, self.queries = hits, []
+
+    def search(self, tenant_id, query, topics=(), k=3):
+        self.queries.append((query, topics))
+        return list(self.hits)
+
+
+def _policy_hit(**overrides):
+    from backend.agents.ports import KnowledgeHit
+    data = {"desconto_bps": 1000, "pedido_minimo_centavos": 5000, "teto_desconto_centavos": 5000,
+            "margem_suposta_bps": 4000, "conversao_sem_desconto_bps": 4000, "conversao_com_desconto_bps": 7000}
+    data.update(overrides)
+    return KnowledgeHit("pol_x", "Política X", "Parâmetros: ...", 3.0, data)
+
+
+class RagTest(unittest.TestCase):
+    def run_order(self, knowledge="padrão", text="quero pizza para 2 pessoas até R$ 200"):
+        sink = RecordingSink()
+        kwargs = {} if knowledge == "padrão" else {"knowledge": knowledge}
+        orch = build_orchestrator(FakeRuntime(offers=PIZZA_ONLY), InMemoryMemory(), sink, **kwargs)
+        orch.handle_message(SessionContext("sess_1", "t", None, "demo", text))
+        return sink
+
+    def events(self, sink, type_):
+        return [e["payload"] for e in sink.events if e["type"] == type_]
+
+    def test_default_bootstrap_uses_markdown_knowledge_base(self):
+        sink = self.run_order()
+        docs = {s["document_id"] for p in self.events(sink, "knowledge_retrieved") for s in p["sources"]}
+        self.assertIn("politica_comercial_demo", docs)
+        self.assertEqual(self.events(sink, "discount_proposed")[0]["discount_bps"], 500)
+
+    def test_discount_follows_retrieved_policy_parameters(self):
+        sink = self.run_order(_FakeKB([_policy_hit()]))
+        p = self.events(sink, "discount_proposed")[0]
+        self.assertEqual((p["discount_bps"], p["discount_cents"]), (1000, 2 * 5990 * 1000 // 10000))
+        self.assertIn("Política X", p["reason"])
+        self.assertEqual(self.events(sink, "knowledge_retrieved")[0]["sources"],
+                         [{"document_id": "pol_x", "title": "Política X"}])
+
+    def test_no_policy_retrieved_means_no_discount(self):
+        from backend.agents.ports import KnowledgeHit
+        sink = self.run_order(_FakeKB([KnowledgeHit("outro", "Outro doc", "...", 1.0, {})]))
+        self.assertNotIn("discount_proposed", sink.types())
+
+    def test_retrieved_minimum_is_respected(self):
+        sink = self.run_order(_FakeKB([_policy_hit(pedido_minimo_centavos=50000)]))
+        self.assertNotIn("discount_proposed", sink.types())
+
+    def test_without_knowledge_base_falls_back_to_embedded_policy(self):
+        sink = self.run_order(knowledge=None)
+        self.assertEqual(self.events(sink, "knowledge_retrieved")[0]["sources"][0]["document_id"], "demo_policy_v1")
+        self.assertIn("(embutida)", self.events(sink, "discount_proposed")[0]["reason"])
+
+    def test_strategist_cites_sales_strategy_document(self):
+        from backend.memory import default_knowledge_base
+        sink = RecordingSink()
+        orch = build_orchestrator(FakeRuntime(), InMemoryMemory(), sink, knowledge=default_knowledge_base())
+        orch.handle_message(SessionContext("sess_1", "t", None, "demo", "quero comida para 2 pessoas até R$ 200",
+                                           initial_context={"preferences": ["pizza"], "restrictions": []}))
+        strat = [e for e in sink.events if e["type"] == "knowledge_retrieved" and e["actor"]["id"] == "sales_strategist"]
+        self.assertEqual(strat[0]["payload"]["sources"][0]["document_id"], "estrategias_venda_demo")
+
+
 class FailureMessageTest(unittest.TestCase):
     def run_with(self, error, detail):
         orch, ctx, sink, _ = make("quero pizza", FakeRuntime(error=error, detail=detail))

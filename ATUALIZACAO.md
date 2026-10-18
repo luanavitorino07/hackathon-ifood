@@ -3,7 +3,27 @@
 > Leia antes de continuar. Este arquivo resume o estado da `main` após o merge do PR #2
 > (`b6b7dbe`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 
-## Novo: teste real em uma segunda máquina (18/10, madrugada)
+## Novo: módulo de memória implementado (PR #3, `52f0c93`)
+
+**`backend/memory/**` agora é do Claude Code**, por decisão humana (o Codex da memória não tinha
+código). **Codex da memória: não reimplemente esta pasta**; proponha mudanças por escrito.
+
+- **RAG mínimo (obrigatório no MVP):** `MarkdownKnowledgeBase` (porta `KnowledgePort` em
+  `backend/agents/ports.py`) sobre `backend/memory/knowledge/*.md` — política de desconto e estratégias
+  de venda, todos DEMO. Busca por palavras-chave, sem embeddings (PROMPT §6: recuperação simples basta).
+  O especialista em descontos usa os números do bloco `params` da política recuperada e cita o
+  documento em `knowledge_retrieved`; o estrategista cita a estratégia aprovada. Os agentes ligam a
+  base sozinhos em `build_orchestrator` — **a API já tem RAG sem mudar código**.
+  Para mudar a política de desconto da demo, edite o documento, não o código.
+- **Persistência:** `SQLiteMemory` (porta `MemoryPort`), com a semântica combinada antes: revisão
+  atômica, `RevisionConflict` sem gravar, `None` → `null`, cópia independente, auditoria de autor e
+  chaves (sem valores). Sobrevive a reinício do processo.
+- **Ainda não ligado na API:** ela segue com `backend/api/session_memory.py` (temporária).
+  → **Lorenzo:** em `backend/api/main.py`, usar `build_application(memory=SQLiteMemory("<arquivo>.db"))`
+  (de `backend.memory`) e garantir que o `.db` não seja versionado.
+- Guia: `backend/memory/README.md`. Testes: `python3 -m unittest discover -s backend/memory/tests -t .` (17).
+
+## Teste real em uma segunda máquina (18/10, madrugada)
 
 O modo real foi reproduzido fora da máquina do Lorenzo, com a `main` (`8cf34c3`), OpenCode 1.19.3,
 chave Gemini nova e OAuth iFood próprio (`opencode mcp list` → `ifood connected (OAuth)`;
@@ -43,11 +63,12 @@ Frontend → API FastAPI (HTTP/SSE) → agentes → runtime OpenCode → Gemini 
 | `backend/api/**` | Lorenzo | Sessões, mensagens, `initial_context`, catálogo, snapshot, histórico, SSE, perfil de gestor da demo |
 | `backend/integrations/**` | Lorenzo | Runtime OpenCode + MCP iFood (`searchOffers`), modo `demo`/`real` |
 | `backend/agents/**` | Claude Code | Orquestrador + pesquisador, planejador, auditor, estrategista de vendas e especialista em descontos; demo offline |
-| `backend/memory/**` | Codex da memória | **Ainda não implementado**; a API usa memória temporária |
+| `backend/memory/**` | Claude Code (antes: Codex da memória) | RAG mínimo + `SQLiteMemory`; a API ainda usa memória temporária |
 | Frontend | Equipe de design | Fora deste repositório de backend |
 
-Testes na `main`: `pytest` (57 aprovados, 1 teste real opt-in pulado) e
-`python3 -m unittest discover -s backend/agents/tests -t .` (65 aprovados).
+Testes na `main`: `pytest backend/api/tests backend/integrations/tests` (57 aprovados, 1 teste real
+opt-in pulado), `python3 -m unittest discover -s backend/agents/tests -t .` (71) e
+`python3 -m unittest discover -s backend/memory/tests -t .` (17).
 
 ## Como rodar
 
@@ -79,7 +100,8 @@ python3 -m backend.agents.demo --roteiro --escritorio
 
 1. **Filtro vegetariano ao vivo** (`refinements.itemRestrictions`) — funcionou em uma amostra (ver acima); falta testar "uma opção vegetariana" e repetir.
 2. **Cota do Gemini**: o modelo atual permite cerca de 20 solicitações. A chave do Lorenzo estourou após a primeira busca; uma chave nova aguentou as 2 buscas do teste. Economize chamadas reais.
-3. **Memória persistente** (`backend/memory`).
+3. **Memória persistente ligada na API** (o `SQLiteMemory` existe; falta a composição em `backend/api/main.py`)
+   e **memória do cliente** (preferências e padrões por cliente; hoje o histórico é um exemplo fixo DEMO).
 4. **Autenticação real** de comprador e gestor.
 5. **Transcrição de áudio** (provedor STT).
 6. **Pedidos e pagamento**: desabilitados até haver implementação, permissões e confirmação explícita do cliente.
@@ -89,8 +111,10 @@ python3 -m backend.agents.demo --roteiro --escritorio
 
 - **Todos:** atualizem sua branch a partir da `main` antes de continuar. Não editem a pasta de outro responsável.
 - **Lorenzo (`feat/integrations`):** **prioridade 1: liberar o gestor de demonstração no modo real local** (item 1 do teste acima); depois testar "uma opção vegetariana" ao vivo e a troca futura para Claude no OpenCode. Mudanças entram por novo PR.
-- **Codex da memória (`feat/memory`):** implementar `MemoryPort` (`backend/agents/ports.py`: `load` / `save_patch` com `RevisionConflict`) em SQLite e substituir `backend/api/session_memory.py` na composição (`build_application(memory=...)`).
-- **Claude Code (`feat/agents`):** economia de chamadas ao runtime (reaproveitar ofertas em mensagens seguintes) e ajustes após o teste vegetariano real.
+- **Lorenzo:** também ligar `SQLiteMemory` na composição da API (ver "módulo de memória" acima).
+- **Codex da memória:** a pasta passou para o Claude Code; não duplicar. Revisão do código é bem-vinda.
+- **Claude Code (`feat/agents`, `backend/memory`):** memória do cliente (preferências/padrões por cliente),
+  economia de chamadas ao runtime (reaproveitar ofertas em mensagens seguintes) e ajustes após testes reais.
 - **Frontend:** consumir a API pelo contrato v1; modo demo disponível para desenvolver sem iFood.
 
 ## Regras que continuam valendo

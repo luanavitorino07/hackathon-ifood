@@ -23,8 +23,9 @@ DEMO_PURCHASE_HISTORY: dict[str, dict[str, Any]] = {
 }
 
 
-def expected_profit_delta(subtotal_cents: int, discount_cents: int) -> int:
-    """Lucro esperado com desconto menos sem desconto, sob as hipóteses DEMO acima."""
-    margin = subtotal_cents * DEMO_POLICY["assumed_margin_bps"] // 10000
-    p0, p1 = DEMO_POLICY["assumed_conversion_bps"]
+def expected_profit_delta(subtotal_cents: int, discount_cents: int, margin_bps: int | None = None,
+                          conversion_bps: tuple[int, int] | None = None) -> int:
+    """Lucro esperado com desconto menos sem desconto, sob as hipóteses informadas (padrão: DEMO acima)."""
+    margin = subtotal_cents * (margin_bps or DEMO_POLICY["assumed_margin_bps"]) // 10000
+    p0, p1 = conversion_bps or DEMO_POLICY["assumed_conversion_bps"]
     return (p1 * (margin - discount_cents) - p0 * margin) // 10000
