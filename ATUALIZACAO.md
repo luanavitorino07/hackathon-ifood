@@ -1,8 +1,64 @@
 # Atualização do projeto — 18/10/2026
 
+## PASSAGEM PARA OUTRA CONTA / SESSÃO — leia primeiro (18/10/2026, `main@b499d4b`)
+
+Gabriel vai continuar o trabalho em outra conta do Claude. Este bloco é o estado completo agora.
+
+### Onde está o código
+- **Tudo na `main`**: PR #15 (Intérprete, agentes conversando, conflitos, memória/clientes fictícios),
+  PR #16 (interface nova + Análise financeira), PR #17 (complementos na busca, restrições pela IA, menos avisos).
+- Pastas locais: `/home/bagiel/hackaton/hackathon-ifood` = checkout da **main** (serve a 8080);
+  `/home/bagiel/hackaton/hack-agents` = worktree do Claude (branches `feat/agents`, `feat/frontend-ceo`,
+  `teste/web` local de teste — pode apagar).
+- Testes: agentes+memória **151 ok** (`python -m unittest discover -s backend/agents/tests -t .` e
+  `... -s backend/memory/tests`); frontend `npx tsc --noEmit` + `npm test` (7 ok). API/integrações:
+  147 ok e **2 falham por suposição antiga** (ver “Lorenzo: 2 testes” abaixo; ajuste de 1 linha cada).
+
+### O que está rodando nesta máquina (abrir **http://localhost:8080**)
+| Porta | O quê | Como subir de novo |
+|---|---|---|
+| 4096 | `opencode serve` (na pasta da main) | `opencode serve --hostname 127.0.0.1 --port 4096` |
+| 8000 | API, **Claude Haiku + Whisper**, modo real | comando abaixo (pasta da main) |
+| 8081 | Expo web (sem `CI=1`, senão não recarrega) | `cd frontend && EXPO_PUBLIC_USE_MOCKS=false EXPO_PUBLIC_DEMO_ADMIN=true npx expo start --web --port 8081 --clear` |
+| 8080 | proxy (frontend + `/api`) | `cd frontend && npm run proxy` |
+
+```
+APP_STT_PROVIDER=whisper APP_STT_MODEL=small OPENCODE_BASE_URL=http://127.0.0.1:4096 \
+OPENCODE_PROVIDER_ID=anthropic OPENCODE_MODEL_ID=claude-haiku-5-5 OPENCODE_MODEL_VARIANT= \
+python -m backend.api.run_local --real --port 8000 --local-demo-admin --include-closed-restaurants
+```
+- O Python usado tem faster-whisper/ffmpeg: venv em
+  `/tmp/claude-1000/-home-bagiel-hackaton-hack-agents/14e4b907-66eb-498d-9142-2463ba91ab31/scratchpad/venv`
+  (em `/tmp`: some se a máquina reiniciar; aí recriar com `requirements` + `backend/integrations/requirements-stt.txt`).
+- **API 8000, Expo 8081 e OpenCode 4096 foram iniciados pela sessão anterior do Claude**: se pararem
+  ao trocar de conta, subir de novo com os comandos acima. Uma API antiga na porta **8002** pode ser encerrada.
+- Memória da API é do processo: reiniciar apaga o histórico de teste; os 4 clientes fictícios voltam sozinhos.
+- Chaves: Anthropic e Google cadastradas no OpenCode (`opencode auth list`). **Nunca colar chave no chat.**
+  Chave Anthropic precisa ser de **workspace** (chave de organização dá 400). iFood OAuth em
+  `backend/integrations/.local/` (gitignored). Para voltar ao Gemini: subir a API sem as 3 variáveis `OPENCODE_*`.
+
+### Como o bot funciona agora (resumo)
+Intérprete (IA) entende prato, complementos ('com coca'), pessoas, orçamento, restrições (inclusive de parte
+do grupo), preferências, confirmação ('fechado' registra venda) e correções ('não sou vegano'). Pesquisador
+busca no iFood (prato + 1 busca por complemento). Curador (IA) julga prato, porções, restrições (dieta só com
+confirmação; saúde quando não há violação) e pede nova busca se nada serve. Planejador/Auditor por regra.
+Estrategista (IA) escolhe estratégia nomeada consultando a Memória; Descontos (IA) só sugere ao gestor.
+Conflitos reais: Curador×Pesquisador, Orçamento×pedido, Estrategista×Descontos, Pedido×cadastro, Planejador×Auditor.
+Detalhes: `backend/agents/README.md`.
+
+### Pendências conhecidas
+1. **Lorenzo**: `test_acceptance.py:124` (8→9 agentes) e `test_real_search_quality.py:426` (índice das permissões).
+2. Complemento (coca) quase nunca vem do mesmo restaurante: a busca `searchOffers` não filtra por loja;
+   o bot diz “peça à parte” ou escolhe combo com bebida. Não inventar ferramenta.
+3. Na apresentação em horário comercial, tirar `--include-closed-restaurants`.
+4. Haiku: ~10–30 s por pedido, 5–7 chamadas de IA por pedido (centavos); acompanhar saldo da Anthropic.
+5. Regras: não commitar segredos; não editar `AGENTS.md`; módulos de outros donos (backend/api,
+   backend/integrations = Lorenzo) só com autorização do Gabriel; merge na main só com autorização;
+   recados ao time vão neste arquivo, na main, com push.
+
 ## MAIS RECENTE — Claude: agentes com mais IA, interface nova e Claude Haiku (18/10/2026)
 
-**Status: em PRs, ainda NÃO na main.** Gabriel autorizou o Claude a mexer também no frontend.
+**Status: NA MAIN** (PRs #15, #16 e #17 mergeados). Gabriel autorizou o Claude a mexer também no frontend.
 - **PR #15 (`feat/agents`)**: agentes + memória. **PR #16 (`feat/frontend-ceo`)**: frontend.
 - Testado ao vivo com iFood real + **Claude Haiku** (`anthropic/claude-haiku-5-5`): ~10–30 s por
   pedido (Gemini levava ~110 s). Sem erros no console do navegador.
