@@ -1,8 +1,62 @@
 # Atualização do projeto — 18/10/2026
 
-> Leia antes de continuar. A entrega de código está na `main` pelo PR #9
-> (`3e558d8`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
-> As seções anteriores foram preservadas abaixo como histórico.
+> Leia antes de continuar. A correção de `feat/integrations@8acbc27` foi integrada
+> à `main` com autorização explícita de Gabriel em 18/10/2026. As regras de trabalho
+> continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
+> As seções anteriores foram preservadas abaixo como histórico; os bloqueios antigos
+> de StructuredOutput foram resolvidos conforme a validação abaixo.
+
+## Integração autorizada e teste real concluído — Codex local (18/10/2026)
+
+Integrada a branch `feat/integrations` até `8acbc27`, preservando os agentes e a memória
+já presentes na main. Inclui correção de StructuredOutput, agentes OpenCode com prompts
+menores, tratamento de cota, SQLite operacional padrão, gestor local com cookie,
+metadados de recomendações e opção explícita de teste com restaurantes fechados.
+Nenhuma edição de frontend ou design.
+
+### Evidência real (antes do merge, mesma versão de código)
+
+- API executada em processo de teste por transporte ASGI; OpenCode 1.19.3 local,
+  Gemini `google/gemini-3.8-flash` e MCP iFood reais, sem substituir respostas por mocks.
+- Pedido: “Quero pizza para 1 pessoa até R$ 1000”. Coordenadas públicas de São Carlos;
+  inclusão de lojas fechadas habilitada somente para teste, sem representar endereço do cliente.
+- Fluxo concluído em **29,2 segundos**, com quatro chamadas ao modelo: pesquisador,
+  Curador, Estrategista e resposta do Orquestrador. Script terminou com código zero.
+- Pesquisador: seis ofertas reais de dois restaurantes. Curador: quatro itens aprovados,
+  um parcial e um rejeitado. Planejador: duas propostas. Auditor: duas aprovadas.
+  Planejador e Auditor executaram regras determinísticas, não chamadas adicionais de IA.
+- Estrategista consultou a memória (cliente sem histórico/preferências) e o RAG, escolheu
+  a ordem por IA e devolveu sua decisão ao Orquestrador. Eventos `agent_message` e
+  `tool_activity` confirmaram as interações e as três análises de IA bem-sucedidas.
+- Resposta final: Marguerita da Just Pizza, item R$ 50,00 + entrega R$ 10,99 = R$ 60,99;
+  segunda opção Quatro Queijos, R$ 70,99. Ambas com `data_origin: ifood_mcp` e `is_open: false`.
+  Resposta e recomendações avisaram que a loja estava fechada e indisponível para pedido;
+  taxa de serviço desconhecida não incluída no valor apresentado.
+- Tentativas anteriores: busca somente em lojas abertas retornou zero ofertas; busca
+  para duas pessoas até R$ 150 chegou ao Curador, mas não gerou combinação válida.
+  Esses resultados não foram apresentados como validação completa.
+
+### Limites e próximos passos
+
+- Catálogo e IA foram reais; o documento comercial recuperado pelo RAG continua
+  identificado como **DEMO**. Descontos reais, áudio, checkout e pagamento não foram
+  validados nesta rodada. Nenhum pedido, carrinho ou pagamento foi executado.
+- O teste validou endpoints ASGI, projeções e eventos internos; não foi uma validação
+  do frontend nem da transmissão SSE por conexão de navegador.
+- Merge de código não reinicia processos: reiniciar a API e o OpenCode da aplicação
+  para carregar os novos agentes `ifood-search` e `ifood-reasoning` de `opencode.json`.
+  O runtime temporário usado no teste não substitui automaticamente o servidor principal.
+- Os novos campos públicos estão documentados em `PROMPT.md` e nos modelos da API.
+  A documentação de `feat/memory` (`7c41360`, `61b2c44`) não foi mesclada nesta operação:
+  `docs/CONTRATO_INTERFACE.md` precisa ser reconciliado com esses campos antes de integrar
+  aquela branch. O contexto inicial já existe na API, mas sua descrição também precisa
+  ser reconciliada no contrato principal. Não usar a documentação antiga como contrato completo atual.
+- Autenticação local de demonstração não equivale a autenticação de produção. SQLite
+  operacional não torna persistentes as sessões HTTP, eventos SSE e idempotência da API.
+
+Validação offline repetida sobre a **main integrada**: **283 testes passaram, 3 testes
+ao vivo opt-in ignorados**, em 4,54 segundos. `git diff --check` sem erros.
+Nenhuma chamada adicional de IA foi feita para essa conferência.
 
 ## Correção Codex / Lorenzo — StructuredOutput e consumo de tokens (18/10/2026)
 
