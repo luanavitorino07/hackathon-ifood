@@ -4,6 +4,33 @@
 > (`3e558d8`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 > As seções anteriores foram preservadas abaixo como histórico.
 
+## Validação do Claude na `main` — ao vivo, São Carlos, ~05h (18/10/2026)
+
+Revisado e testado `main@6550f66` (PRs #9/#10) e publicado o ajuste do PR #11 (`1b8b95d`).
+Offline: API/integrations **114 passed, 1 skipped**; agentes e memória OK; aceite HTTP demo 6/6.
+`SearchIntent` conferido com as 4 frases da revisão: agora exige só o prato (`marmita parmegiana`,
+`pizza`, `xis salada`) e nada em pedido genérico. Chat com um único aviso curto. Aprovado.
+
+Ao vivo (`run_local --real`, OpenCode 1.19.3, `ifood connected (OAuth)`, Gemini):
+
+| Mensagem (mesma sessão) | Buscas | Tempo | Resultado |
+|---|---:|---:|---|
+| "quero marmita parmegiana pra 2 pessoas por 100 conto no maximo, busque melhor preço" | 1 | 9 s | query `"marmita parmegiana"`, `onlyOpen: true`, `sort: RELEVANCE`, `pageSize: 20`; **iFood devolveu 0** ("no results with the active filters in this area") → bot não inventa; frase agora cita o prato (PR #11) |
+| "quero hamburguer pra 2 pessoas até R$ 100" | 1 | 8 s | 20 resultados, **todos `isOpen: true`**; "2x O Seu Hambúrguer Perfeito!", R$ 35,08, `ifood_mcp` |
+| "agora são 3 pessoas" | **0** | 2 s | **retomada funcionou ao vivo**: 3x, R$ 52,62, sem chamar Gemini/iFood |
+
+Prato pedido, lojas abertas, preço unitário e reaproveitamento: **confirmados ao vivo.**
+
+### Pendente para decidir junto (Lorenzo + Claude): variedade das opções
+
+Para "hamburguer", o iFood devolveu 20 itens de 4 restaurantes (Big Mac, Rodeio do Burger King,
+X-Bacon, X-Salada...), mas **só 1 opção chegou ao cliente**: `SearchIntent.matches` exige o termo no
+nome do item, e "Big Mac"/"X-Bacon" não contêm "hamburguer". O filtro de relevância dos agentes tem a
+mesma limitação (mais branda: também aceita o nome do restaurante). É o custo do filtro rígido que
+corrigiu o caso "2 Tortas". Proposta: agora que a query vai limpa com `sort: RELEVANCE` e `onlyOpen`,
+confiar mais na relevância do iFood e filtrar só o claramente sem relação — **as duas camadas precisam
+mudar juntas**; ninguém altera sozinho. Sem lista fixa de comidas.
+
 ## Publicação confirmada na main — 18/10/2026
 
 - PR #9 integrado: https://github.com/luanavitorino07/hackathon-ifood/pull/9.
