@@ -194,8 +194,18 @@ def wants_schedule_cancel(text: str) -> bool:
 _TRAILING_WORDS = {"de", "do", "da", "dos", "das", "no", "na", "pro", "pra", "para", "e", "com", "o", "a"}
 
 
-def clean_name(text: str) -> str | None:
-    words = re.findall(r"[^\W\d_]+", text.lower())
+def _singular(word: str) -> str:
+    """'feijões' -> 'feijão', 'pães' -> 'pão', 'leites' -> 'leite' (busca e correspondência no singular)."""
+    for plural, single in (("ões", "ão"), ("ães", "ão"), ("oes", "ao"), ("aes", "ao")):
+        if word.endswith(plural) and len(word) >= 4:
+            return word[:-len(plural)] + single
+    if word.endswith("s") and not word.endswith(("ss", "is", "us")) and len(word) > 4:
+        return word[:-1]
+    return word
+
+
+def clean_name(text: str, singular: bool = True) -> str | None:
+    words = [_singular(w) if singular else w for w in re.findall(r"[^\W\d_]+", text.lower())]
     while words and words[-1] in _TRAILING_WORDS:
         words.pop()
     while words and words[0] in _TRAILING_WORDS:
@@ -228,7 +238,7 @@ def _item(chunk: str) -> ListItem | None:
         t = _TRAILING_SIZE.match(chunk)  # "arroz 5kg"
         if t:
             chunk, note = t.group(1), f"{t.group(2)} {t.group(3)}"
-    name = clean_name(_FILLER.sub("", chunk.strip()))
+    name = clean_name(_FILLER.sub("", chunk.strip()), singular=False)  # singular depois de recuperar o acento
     return ListItem(name, qty, note) if name else None
 
 
@@ -244,7 +254,8 @@ def parse_items(text: str) -> tuple[ListItem, ...]:
     for chunk in chunks:
         item = _item(chunk)
         if item and item.name not in items:
-            items[item.name] = ListItem(_accented(item.name, folded, original), item.quantity, item.note)
+            name = clean_name(_accented(item.name, folded, original)) or item.name
+            items[item.name] = ListItem(name, item.quantity, item.note)
     return tuple(items.values())[:MAX_LIST_ITEMS]
 
 

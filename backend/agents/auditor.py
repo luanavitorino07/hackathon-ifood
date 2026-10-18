@@ -70,7 +70,7 @@ def audit_basket(rec: dict[str, Any], st: WorkingState) -> list[str]:
             if r in tags:
                 continue
             label = restriction_label(r)
-            if not ai_ran:
+            if not ai_ran or pid not in st.ai_fit:  # a IA não avaliou este produto: só passa com aviso
                 if not any("Restrições não verificadas" in w for w in rec["warnings"]):
                     issues.append(f"Restrição '{label}' não verificada sem aviso ao cliente")
             elif r not in st.ai_restrictions.get(pid, ()):
