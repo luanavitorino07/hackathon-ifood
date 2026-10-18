@@ -1,5 +1,45 @@
 # Atualização do projeto — 18/10/2026
 
+## MAIS RECENTE — Claude: agentes com mais IA, interface nova e Claude Haiku (18/10/2026)
+
+**Status: em PRs, ainda NÃO na main.** Gabriel autorizou o Claude a mexer também no frontend.
+- **PR #15 (`feat/agents`)**: agentes + memória. **PR #16 (`feat/frontend-ceo`)**: frontend.
+- Testado ao vivo com iFood real + **Claude Haiku** (`anthropic/claude-haiku-5-5`): ~10–30 s por
+  pedido (Gemini levava ~110 s). Sem erros no console do navegador.
+
+### O que muda para quem usa
+- **Intérprete (agente novo, IA)** entende o pedido com o contexto: "eu e 3 amigos, um é vegano, poke"
+  → 4 pessoas + opção vegana; "intelorancia a lactose, quero sorvete" → busca "sorvete" + sem lactose;
+  "acha um montado" → poke já montado; "fechado/pode ser" → venda registrada.
+- **Curador** avalia restrições pelo nome do item (com aviso "avaliada pela IA, confirme com o
+  restaurante") e, se nada serve, **pede outra busca ao Pesquisador**.
+- **Agentes conversam entre si** (não só com o orquestrador) e há **conflitos reais**: Curador ×
+  Pesquisador, Orçamento × pedido (fica aberto até o cliente responder), Estrategista × Descontos,
+  Pedido × cadastro, Planejador × Auditor.
+- **Descontos** agora atuam também no modo real (só sugestão ao gestor; hipóteses DEMO).
+- **Clientes fictícios** (Ana, Bruno, Carla, Diego) com histórico e cadastro, escolhidos no chat;
+  memória em `backend/memory/demo_seed.py` (desligar: `APP_DEMO_CUSTOMERS=0`).
+- **Análise financeira** (ex-"Visão do CEO"): indicadores + **monitoria de estratégias** (qual vende).
+- Chat: recomendações antigas não somem mais; cabeçalho e cards novos.
+
+### Lorenzo: 2 testes da API supõem o comportamento antigo (ajuste de 1 linha cada)
+- `backend/api/tests/test_acceptance.py:124` — `len(agents) == 8` → agora **9** (entrou o Intérprete).
+- `backend/api/tests/test_real_search_quality.py:426` — `permissions[1]` supõe que a 1ª chamada é a
+  busca; agora a 1ª é o raciocínio do Intérprete. Sugestão: procurar a lista de permissões com
+  `StructuredOutput` em vez de usar o índice. Demais 147 testes da API/integrações passam.
+
+### Subir a API com Claude Haiku + áudio (comando da apresentação)
+Chave da Anthropic cadastrada no OpenCode (`opencode auth login` → Anthropic, chave de **workspace**;
+chave de organização dá erro 400). Reiniciar o `opencode serve` depois de cadastrar.
+```
+APP_STT_PROVIDER=whisper APP_STT_MODEL=small \
+OPENCODE_PROVIDER_ID=anthropic OPENCODE_MODEL_ID=claude-haiku-5-5 OPENCODE_MODEL_VARIANT= \
+python -m backend.api.run_local --real --local-demo-admin --include-closed-restaurants
+```
+`OPENCODE_MODEL_VARIANT=` vazio é obrigatório (o padrão `low` é do Gemini). Sem `APP_STT_PROVIDER`
+o botão de áudio responde "transcrição não configurada". Na apresentação em horário comercial,
+tirar `--include-closed-restaurants`.
+
 ## INTEGRAÇÃO MAIS RECENTE — frontend + áudio + main (18/10/2026)
 
 **Este bloco substitui o estado anterior de “frontend não integrado” e “áudio só local”.**
