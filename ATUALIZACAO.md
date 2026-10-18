@@ -4,18 +4,49 @@
 > (`3e558d8`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 > As seções anteriores foram preservadas abaixo como histórico.
 
+## 🔴 Revisão do Claude em `feat/integrations@e2f03b6` — IA dos agentes NÃO roda no modo real (18/10/2026)
+
+**Aprovado nesta entrega:** raciocínio sem ferramentas (`_execute_reasoning`), filtro por nome removido
+(Curador decide), teste 6→8 agentes, gestor local + cookie (re-testado: SSE do gestor só com cookie = 36
+eventos, 12 `agent_message`), detalhes de entrega. Suíte: **134 passed, 1 skipped**; agentes/memória OK;
+aceite 6/6. Sem segredos; nada em `backend/agents`/`backend/memory`.
+
+**Bloqueio encontrado ao vivo** (São Carlos, `run_local --real --local-demo-admin`, "pizza para 2"):
+busca OK (`ifood_mcp`, 10 ofertas), mas **as 3 chamadas de raciocínio falharam** (Curador, Estrategista,
+resposta) → agentes caíram na regra de reserva e o bot voltou a sugerir "Pizza" de R$ 8,99 da esfiharia e
+"Pastel de Pizza". Causa confirmada direto no OpenCode 1.19.3 (testes manuais, sem nosso código):
+
+1. **`tools: {"*": false}` desliga a ferramenta interna `StructuredOutput`.** O OpenCode implementa
+   `format: json_schema` como uma tool `StructuredOutput` ("You MUST use the StructuredOutput tool"). Sem
+   ela: `info.error = StructuredOutputError: Model did not produce structured output`.
+   **Correção (testada):** no raciocínio, `tools: {"*": false, "StructuredOutput": true}` e na sessão
+   `permission: [{"permission":"*","pattern":"*","action":"deny"}, {"permission":"StructuredOutput","pattern":"*","action":"allow"}]`.
+2. **O campo da resposta é `info.structured`**, não `info.structured_output` (o SDK documenta o outro nome).
+   Teste: `info.structured = {"resposta": "ok"}`; a tool part `StructuredOutput` tem `state.input` igual e
+   `metadata.valid = true`. **Correção:** ler `info.get("structured", info.get("structured_output"))` (e, como
+   reserva, `state.input` da tool part `StructuredOutput`).
+3. **`GET /session/{id}/message` responde 400** em sessões com `format` (bug de serialização do OpenCode:
+   "Expected OutputFormatJsonSchema ... at [0].info.format"). Com `StructuredOutput: true`, o `run_prompt`
+   considera "tools habilitadas" e faz esse GET → falharia. **Correção:** no raciocínio, não listar mensagens;
+   usar o corpo do POST (`info` + `parts`).
+
+Custo observado: **~8.400 tokens por chamada de raciocínio** (o OpenCode injeta o prompt do agente `build`).
+Otimização futura: um agente OpenCode enxuto só para raciocínio.
+
+Depois dessas 3 correções: abrir o PR da `feat/integrations` (já contém a `main`). O Claude testa ao vivo de novo.
+
 ## ✅ LISTA DO LORENZO — tudo que falta atualizar (Claude, 18/10/2026, `main@e700f39`)
 
 PR #14 (agentes com IA) **já está na `main`**. Em ordem de prioridade:
 
-1. **[BLOQUEIA a IA no modo real] Runtime aceitar "chamada de raciocínio" sem ferramentas.**
+1. **[FEITO em `e2f03b6`, MAS COM BUG — ver revisão acima] Runtime aceitar "chamada de raciocínio" sem ferramentas.**
    `RuntimeCall.allowed_tools == ()` e `max_tool_calls == 0` → rodar no OpenCode com todas as tools
    desligadas, `system=call.system`, `format: json_schema` com `call.output_schema`, respeitando `timeout_s`;
    devolver `RuntimeOutcome(ok=True, structured=<structured_output>, tool_calls=())`. Erros iguais aos da
    busca (`invalid_output`, `quota`, `timeout`, `unavailable`). Não passar por `SearchIntent`/`onlyOpen` nem
    marcar `ifood_mcp`. Hoje volta `tool_not_allowed` → os agentes usam a regra de reserva. Detalhes na seção
    "PRIORIDADE — Agentes passam a usar IA de verdade" logo abaixo.
-2. **[ÚNICA FALHA DA SUÍTE NA `main`] `backend/api/tests/test_acceptance.py:124`**: trocar
+2. **[FEITO na `feat/integrations`, falta PR] `backend/api/tests/test_acceptance.py:124`**: trocar
    `len(catalog.json()["agents"]) == 6` por `== 8` (novos: `curator`, `customer_memory`). Hoje: 1 failed,
    113 passed.
 3. **[PRONTO, falta PR] Sua `feat/integrations` (`e86492c`, `8512f8d`)** — revisada pelo Claude e aprovada:
@@ -23,7 +54,7 @@ PR #14 (agentes com IA) **já está na `main`**. Em ordem de prioridade:
    navegador** (testado: SSE do gestor só com cookie recebeu 26 eventos; cliente e cookie falso → 403),
    `SQLiteMemory` padrão na API, modo de teste com lojas fechadas (pedido bloqueado com 409).
    Faça `git merge origin/main` (sem conflitos, testado), rode a suíte e abra o PR.
-4. **[QUALIDADE] Afrouxar `SearchIntent.matches` agora que existe o Curador (IA).** Hoje o filtro por palavra
+4. **[FEITO em `e2f03b6`] Afrouxar `SearchIntent.matches` agora que existe o Curador (IA).** Hoje o filtro por palavra
    corta "Big Mac"/"X-Bacon" para "hamburguer" **antes** de a IA ver. Proposta: manter `validate_query`
    (query limpa) mas não descartar itens por nome; o Curador decide relevância e o filtro por palavras dos
    agentes vira só reserva quando a IA falhar. Combinar antes de mexer.
