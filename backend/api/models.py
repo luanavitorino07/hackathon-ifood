@@ -1,4 +1,4 @@
-"""DTOs fechados do contrato público definido na seção 15 do PROMPT.md."""
+"""DTOs fechados do contrato público v1 (HTTP JSON + SSE) entre o backend e as duas interfaces."""
 
 from __future__ import annotations
 

@@ -51,9 +51,7 @@ backend/
   integrations/  runtime OpenCode (MCP iFood + IA), transcrição Whisper
   memory/        SQLite (estado e cliente), RAG comercial (knowledge/*.md), clientes fictícios
 frontend/        Expo + React Native Web: chat, escritório e Análise financeira
-docs/            arquitetura; docs/historico/ guarda o diário do hackathon
-PROMPT.md        especificação do produto e contrato de integração v1
-AGENTS.md        regras de colaboração entre as IAs de programação (CLAUDE.md aponta para ele)
+docs/            arquitetura completa e texto dos agentes para o documento final
 opencode.json    agentes do OpenCode (ifood-search, ifood-reasoning) e servidor MCP do iFood
 ```
 
