@@ -4,6 +4,35 @@
 > (`3e558d8`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 > As seções anteriores foram preservadas abaixo como histórico.
 
+## Decisões do Gabriel e prioridades até a apresentação (18/10/2026)
+
+Para o Codex do Lorenzo. Substitui prioridades anteriores onde houver conflito.
+
+| # | Item | Decisão |
+|---|---|---|
+| 1 | Painel do gestor em modo real (403 com `X-Demo-Role: admin`) | **Prioridade 1.** Sem isso o escritório fica vazio numa apresentação com dados reais. |
+| 2 | Escritório ao vivo no navegador (SSE) | **Prioridade 2 — ver detalhe abaixo.** |
+| 3 | Variedade das opções (filtro lexical rígido) | Em aberto; combinar Lorenzo + Claude antes de mexer (ver seção de validação abaixo). |
+| 4 | `SQLiteMemory` ligada na API | **Não necessário.** A apresentação é uma execução contínua; memória temporária basta. Não priorizar. |
+| 5 | Interface conectada à API | **Aguardando a Luana (frontend).** Nada a fazer no backend até a interface existir; manter o contrato v1. |
+| 6 | Modelo de IA | **Manter Gemini durante os testes; trocar o modelo do OpenCode para Claude (API Anthropic) no final**, antes da apresentação. Não exige refazer o OAuth do iFood; muda provedor/modelo no OpenCode e `OPENCODE_PROVIDER_ID`/`OPENCODE_MODEL_ID`. Economizar chamadas reais até lá. |
+
+### Item 2 em detalhe — o navegador não manda `X-Demo-Role` no SSE
+
+O `EventSource` padrão do navegador **não permite cabeçalhos personalizados**. Então a conexão ao vivo
+`GET /api/v1/sessions/{id}/events` sai sem `X-Demo-Role: admin` e o escritório recebe só a visão de
+comprador (sem `agent_message`, `tool_activity`, `discount_proposed`...), **mesmo em modo demo**.
+`/history` e `/snapshot` via `fetch` funcionam porque aceitam cabeçalho.
+
+Opções (decidir com a Luana; a API é do Lorenzo):
+- **Cookie de gestor de demonstração** (ex.: `GET /api/v1/demo/manager-login` que define cookie
+  `HttpOnly` só em `127.0.0.1`/modo demo) — é o que o contrato recomenda (PROMPT §15.1: cookie
+  same-origin para `EventSource`). Exige rota nova → acordo de contrato.
+- **Frontend usar `fetch` + leitura de stream** em vez de `EventSource` (aceita cabeçalho; sem mudar a API).
+- **Polling de `/history?after_seq=`** como reserva.
+
+Não colocar credencial ou papel em query string (proibido no contrato).
+
 ## Validação do Claude na `main` — ao vivo, São Carlos, ~05h (18/10/2026)
 
 Revisado e testado `main@6550f66` (PRs #9/#10) e publicado o ajuste do PR #11 (`1b8b95d`).
