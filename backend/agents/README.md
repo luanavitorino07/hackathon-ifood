@@ -34,6 +34,7 @@ orch.catalog()       # list[dict] AgentDefinition, para GET /agents
 | `AgentRuntimePort.run(RuntimeCall) -> RuntimeOutcome` | integrations | OpenCode + Gemini + MCP |
 | `EventSink.emit(...)` | integrations | atribui `event_id`/`seq`/`tenant_id`/`mode`/`occurred_at`, persiste e só então transmite |
 | `MemoryPort.load / save_patch` | memory | estado por atendimento, com revisão (`RevisionConflict`) |
+| `KnowledgePort.search(tenant_id, query, topics, k) -> list[KnowledgeHit]` | memory | RAG sobre documentos comerciais; `build_orchestrator` usa a base padrão de `backend.memory` (passe `knowledge=None` para desligar) |
 
 ### `RuntimeCall` (entrada)
 `agent_id, task_id, session_id, system, prompt, output_schema, allowed_tools=("offer_search",)`,
@@ -82,8 +83,9 @@ memória), follow-ups também contam como pedido.
 - **Estrategista de vendas:** só reordena propostas já aprovadas pelo auditor, por preferência declarada
   (`initial_context.preferences`) e, em sessão `demo`, pelo histórico fictício de `client_demo_1`.
   Emite `pattern_identified` (`stated_preference` ou `demo`) e conta ao cliente o motivo.
-- **Especialista em descontos:** só em sessão `demo`. Consulta a política DEMO (`knowledge_retrieved`) e,
-  se o lucro esperado sob as hipóteses DEMO melhorar, emite `discount_proposed` com `status="suggested"` e
+- **Especialista em descontos:** só em sessão `demo`. Busca a política no RAG (`knowledge_retrieved` com o
+  documento real) e usa os parâmetros do bloco `params` dele; sem RAG, usa a política embutida e diz isso;
+  com RAG mas sem política recuperada, não sugere. Se o lucro esperado sob essas hipóteses melhorar, emite `discount_proposed` com `status="suggested"` e
   `requires_approval=true`, visível só ao gestor. O desconto **não** entra no total nem na fala ao cliente.
 
 ## Eventos emitidos
@@ -123,4 +125,4 @@ python3 -m backend.agents.demo --preferencia pizza --restricao vegetariana
 dados saem com `provider="demo"`/`data_origin="demo"` e nunca são promovidos a `ifood_mcp`.
 
 ## Fora do escopo atual
-RAG real, padrões de compra a partir de histórico real e controle de cota (este é do runtime).
+Padrões de compra a partir de histórico real e controle de cota (este é do runtime).

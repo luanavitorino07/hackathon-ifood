@@ -58,5 +58,12 @@ class SalesStrategist:
         rest = [r for r in st.recommendations if r not in favored]
         st.recommendations = favored + rest
         source = "histórico DEMO" if basis == "demo" else "preferência declarada"
+        if ctx.knowledge is not None:  # fundamenta a personalização na estratégia aprovada (RAG)
+            hits = ctx.knowledge.search(session.tenant_id, "personalização preferência histórico padrão de compra",
+                                        ("personalização",), k=1)
+            if hits:
+                ctx.events.knowledge_retrieved("sales_strategist", ["personalização"],
+                                               [{"document_id": hits[0].document_id, "title": hits[0].title}])
+                source += f", conforme \"{hits[0].title}\""
         return AgentResult("sales_strategist", "done", {"reordered": True, "favored": len(favored)},
                            f"{len(favored)} opção(ões) priorizada(s) por {source}.", "medium")

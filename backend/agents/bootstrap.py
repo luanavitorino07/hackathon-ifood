@@ -5,7 +5,7 @@ from .auditor import Auditor
 from .discount import DiscountSpecialist
 from .orchestrator import Orchestrator
 from .planner import Planner
-from .ports import AgentRuntimePort, EventSink, MemoryPort
+from .ports import AgentRuntimePort, EventSink, KnowledgePort, MemoryPort
 from .registry import AgentRegistry
 from .researcher import Researcher
 from .strategist import SalesStrategist
@@ -18,6 +18,20 @@ def build_registry() -> AgentRegistry:
     return registry
 
 
+_DEFAULT = object()
+
+
+def default_knowledge() -> KnowledgePort | None:
+    """Base de conhecimento padrão (RAG de backend/memory); None se o módulo não estiver disponível."""
+    try:
+        from backend.memory import default_knowledge_base
+    except ImportError:
+        return None
+    return default_knowledge_base()
+
+
 def build_orchestrator(runtime: AgentRuntimePort, memory: MemoryPort, sink: EventSink,
-                       registry: AgentRegistry | None = None) -> Orchestrator:
-    return Orchestrator(registry or build_registry(), runtime, memory, sink)
+                       registry: AgentRegistry | None = None,
+                       knowledge: KnowledgePort | None | object = _DEFAULT) -> Orchestrator:
+    kb = default_knowledge() if knowledge is _DEFAULT else knowledge
+    return Orchestrator(registry or build_registry(), runtime, memory, sink, kb)  # type: ignore[arg-type]
