@@ -1,0 +1,552 @@
+[
+  {
+    "schema_version": 1,
+    "event_id": "evt_2",
+    "seq": 2,
+    "occurred_at": "2026-10-17T18:00:30Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "chat_message",
+    "actor": {
+      "kind": "customer",
+      "id": "client_demo_1"
+    },
+    "recipient": {
+      "kind": "system",
+      "id": "orchestrator"
+    },
+    "visibility": "both",
+    "mode": "demo",
+    "payload": {
+      "message": {
+        "message_id": "msg_client_1",
+        "role": "customer",
+        "input_mode": "audio",
+        "text": "Quero comida para quatro pessoas, até cento e vinte reais, com uma opção vegetariana.",
+        "created_at": "2026-10-17T18:00:30Z"
+      }
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_3",
+    "seq": 3,
+    "occurred_at": "2026-10-17T18:00:31Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "memory_changed",
+    "actor": {
+      "kind": "system",
+      "id": "orchestrator"
+    },
+    "recipient": null,
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "scope": "session",
+      "keys": ["budget", "party_size", "dietary_preference"],
+      "summary": "Orçamento, quantidade de pessoas e opção vegetariana registrados."
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_4",
+    "seq": 4,
+    "occurred_at": "2026-10-17T18:00:32Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "agent_message",
+    "actor": {
+      "kind": "agent",
+      "id": "orchestrator"
+    },
+    "recipient": {
+      "kind": "agent",
+      "id": "researcher"
+    },
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "message_id": "agent_msg_1",
+      "task_id": "task_1",
+      "channel": "request",
+      "summary": "Pesquisar opções para quatro pessoas até R$ 120 com alternativa vegetariana."
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_5",
+    "seq": 5,
+    "occurred_at": "2026-10-17T18:00:33Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "agent_status",
+    "actor": {
+      "kind": "agent",
+      "id": "researcher"
+    },
+    "recipient": null,
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "agent_id": "researcher",
+      "status": "running",
+      "task_id": "task_1",
+      "summary": "Pesquisando opções."
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_6",
+    "seq": 6,
+    "occurred_at": "2026-10-17T18:00:34Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "tool_activity",
+    "actor": {
+      "kind": "tool",
+      "id": "demo_catalog"
+    },
+    "recipient": {
+      "kind": "agent",
+      "id": "researcher"
+    },
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "call_id": "call_1",
+      "tool_name": "search_offers",
+      "provider": "demo",
+      "status": "started",
+      "duration_ms": null,
+      "summary": "Consulta de demonstração iniciada."
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_7",
+    "seq": 7,
+    "occurred_at": "2026-10-17T18:00:35Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "tool_activity",
+    "actor": {
+      "kind": "tool",
+      "id": "demo_catalog"
+    },
+    "recipient": {
+      "kind": "agent",
+      "id": "researcher"
+    },
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "call_id": "call_1",
+      "tool_name": "search_offers",
+      "provider": "demo",
+      "status": "succeeded",
+      "duration_ms": 180,
+      "summary": "Ofertas de demonstração consultadas."
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_8",
+    "seq": 8,
+    "occurred_at": "2026-10-17T18:00:36Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "agent_message",
+    "actor": {
+      "kind": "agent",
+      "id": "researcher"
+    },
+    "recipient": {
+      "kind": "agent",
+      "id": "planner"
+    },
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "message_id": "agent_msg_2",
+      "task_id": "task_1",
+      "channel": "proposal",
+      "summary": "Foi encontrada uma opção de demonstração dentro do orçamento."
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_9",
+    "seq": 9,
+    "occurred_at": "2026-10-17T18:00:37Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "pattern_identified",
+    "actor": {
+      "kind": "agent",
+      "id": "planner"
+    },
+    "recipient": null,
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "pattern_id": "pattern_1",
+      "description": "Preferência recorrente por opções vegetarianas.",
+      "basis": "demo",
+      "evidence_count": 3,
+      "confidence": "medium"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_10",
+    "seq": 10,
+    "occurred_at": "2026-10-17T18:00:38Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "knowledge_retrieved",
+    "actor": {
+      "kind": "agent",
+      "id": "discount_specialist"
+    },
+    "recipient": null,
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "query_id": "query_1",
+      "topics": ["discount_policy"],
+      "sources": [
+        {
+          "document_id": "doc_1",
+          "title": "Política comercial de demonstração"
+        }
+      ],
+      "count": 1
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_11",
+    "seq": 11,
+    "occurred_at": "2026-10-17T18:00:39Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "discount_proposed",
+    "actor": {
+      "kind": "agent",
+      "id": "discount_specialist"
+    },
+    "recipient": {
+      "kind": "agent",
+      "id": "orchestrator"
+    },
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "proposal_id": "discount_1",
+      "recommendation_id": "rec_1",
+      "discount_type": "percent",
+      "discount_bps": 500,
+      "discount_cents": null,
+      "estimated_profit_delta_cents": null,
+      "status": "suggested",
+      "requires_approval": true,
+      "reason": "Sugestão ilustrativa sujeita à aprovação comercial."
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_12",
+    "seq": 12,
+    "occurred_at": "2026-10-17T18:00:40Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "agent_message",
+    "actor": {
+      "kind": "agent",
+      "id": "planner"
+    },
+    "recipient": {
+      "kind": "agent",
+      "id": "auditor"
+    },
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "message_id": "agent_msg_3",
+      "task_id": "task_1",
+      "channel": "review",
+      "summary": "Revisar orçamento, opção vegetariana e situação do desconto."
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_13",
+    "seq": 13,
+    "occurred_at": "2026-10-17T18:00:41Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "decision_made",
+    "actor": {
+      "kind": "agent",
+      "id": "orchestrator"
+    },
+    "recipient": null,
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "decision_id": "decision_1",
+      "recommendation_id": "rec_1",
+      "summary": "Recomendação aprovada sem aplicar o desconto sugerido.",
+      "reasons": [
+        "Dentro do orçamento",
+        "Atende quatro pessoas",
+        "Inclui opção vegetariana"
+      ],
+      "limitations": [
+        "Dados de demonstração",
+        "Desconto depende de aprovação comercial"
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_14",
+    "seq": 14,
+    "occurred_at": "2026-10-17T18:00:42Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "recommendations_ready",
+    "actor": {
+      "kind": "agent",
+      "id": "orchestrator"
+    },
+    "recipient": null,
+    "visibility": "both",
+    "mode": "demo",
+    "payload": {
+      "recommendations": [
+        {
+          "recommendation_id": "rec_1",
+          "merchant_id": "rest_1",
+          "merchant_name": "Restaurante Exemplo",
+          "items": [
+            {
+              "product_id": "prd_1",
+              "name": "Combo família com opção vegetariana",
+              "quantity": 1,
+              "unit_price_cents": 11000
+            }
+          ],
+          "currency": "BRL",
+          "subtotal_cents": 11000,
+          "delivery_fee_cents": 800,
+          "other_fees_cents": 0,
+          "discount_cents": 0,
+          "total_cents": 11800,
+          "eta_minutes": 40,
+          "reasons": [
+            "Atende quatro pessoas",
+            "Dentro do orçamento",
+            "Inclui opção vegetariana"
+          ],
+          "warnings": [
+            "Dados de demonstração",
+            "Desconto sugerido ainda não foi aprovado"
+          ],
+          "data_origin": "demo"
+        }
+      ]
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_15",
+    "seq": 15,
+    "occurred_at": "2026-10-17T18:00:43Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "agent_status",
+    "actor": {
+      "kind": "agent",
+      "id": "orchestrator"
+    },
+    "recipient": null,
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "agent_id": "orchestrator",
+      "status": "done",
+      "task_id": "task_1",
+      "summary": "Recomendação enviada ao cliente."
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_16",
+    "seq": 16,
+    "occurred_at": "2026-10-17T18:00:44Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "chat_message",
+    "actor": {
+      "kind": "agent",
+      "id": "orchestrator"
+    },
+    "recipient": {
+      "kind": "customer",
+      "id": "client_demo_1"
+    },
+    "visibility": "both",
+    "mode": "demo",
+    "payload": {
+      "message": {
+        "message_id": "msg_assistant_1",
+        "role": "assistant",
+        "input_mode": "text",
+        "text": "Encontrei uma opção de demonstração para quatro pessoas, com alternativa vegetariana, por R$ 118,00.",
+        "created_at": "2026-10-17T18:00:44Z"
+      }
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_17",
+    "seq": 17,
+    "occurred_at": "2026-10-17T18:01:00Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "cart_changed",
+    "actor": {
+      "kind": "system",
+      "id": "orchestrator"
+    },
+    "recipient": null,
+    "visibility": "both",
+    "mode": "demo",
+    "payload": {
+      "cart": {
+        "cart_id": "cart_1",
+        "status": "ready",
+        "items": [
+          {
+            "product_id": "prd_1",
+            "name": "Combo família com opção vegetariana",
+            "quantity": 1,
+            "unit_price_cents": 11000
+          }
+        ],
+        "currency": "BRL",
+        "total_cents": 11800,
+        "data_origin": "demo"
+      }
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_18",
+    "seq": 18,
+    "occurred_at": "2026-10-17T18:01:01Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "order_status_changed",
+    "actor": {
+      "kind": "system",
+      "id": "orchestrator"
+    },
+    "recipient": null,
+    "visibility": "both",
+    "mode": "demo",
+    "payload": {
+      "order_id": "order_demo_1",
+      "status": "submitted",
+      "summary": "Pedido de demonstração submetido; nenhuma compra real foi executada."
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_19",
+    "seq": 19,
+    "occurred_at": "2026-10-17T18:01:02Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "session_closed",
+    "actor": {
+      "kind": "system",
+      "id": "orchestrator"
+    },
+    "recipient": null,
+    "visibility": "both",
+    "mode": "demo",
+    "payload": {
+      "outcome": "order_submitted",
+      "summary": "Atendimento encerrado após submissão simulada do pedido."
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_20",
+    "seq": 20,
+    "occurred_at": "2026-10-17T18:01:20Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "conflict_detected",
+    "actor": {
+      "kind": "agent",
+      "id": "auditor"
+    },
+    "recipient": null,
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "conflict_id": "conflict_1",
+      "agent_ids": ["planner", "discount_specialist"],
+      "description": "Desconto proposto sem confirmação de margem de lucro.",
+      "status": "open"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_21",
+    "seq": 21,
+    "occurred_at": "2026-10-17T18:01:21Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "conflict_detected",
+    "actor": {
+      "kind": "agent",
+      "id": "auditor"
+    },
+    "recipient": null,
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "conflict_id": "conflict_1",
+      "agent_ids": ["planner", "discount_specialist"],
+      "description": "Desconto proposto sem confirmação de margem de lucro.",
+      "status": "resolved"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "evt_22",
+    "seq": 22,
+    "occurred_at": "2026-10-17T18:01:21Z",
+    "tenant_id": "tenant_demo",
+    "session_id": "sess_1",
+    "type": "conflict_detected",
+    "actor": {
+      "kind": "agent",
+      "id": "auditor"
+    },
+    "recipient": null,
+    "visibility": "admin",
+    "mode": "demo",
+    "payload": {
+      "conflict_id": "conflict_2",
+      "agent_ids": ["planner", "discount_specialist"],
+      "description": "Prazo de entrega depende de confirmação da loja.",
+      "status": "open"
+    }
+  }
+]
