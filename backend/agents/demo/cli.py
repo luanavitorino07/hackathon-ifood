@@ -64,7 +64,13 @@ def run_conversation(lines: Iterable[str], out: TextIO | None = None, office: bo
                      initial_context: dict[str, Any] | None = None) -> PrintingSink:
     out = out or sys.stdout
     sink = PrintingSink(out, office)
-    orch = build_orchestrator(DemoCatalogRuntime(with_tags, fail, None), InMemoryMemory(), sink)
+    try:  # memória do cliente nova a cada execução da demo (determinística)
+        from backend.memory import SQLiteCustomerMemory
+        customers = SQLiteCustomerMemory()
+    except ImportError:
+        customers = None
+    orch = build_orchestrator(DemoCatalogRuntime(with_tags, fail, None), InMemoryMemory(), sink,
+                              customers=customers)
     print("=== MODO DEMONSTRAÇÃO OFFLINE — dados fictícios, sem iFood/MCP/Gemini ===\n", file=out)
     for text in lines:
         print(f"Cliente: {text}", file=out)

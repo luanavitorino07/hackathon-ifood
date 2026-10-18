@@ -19,6 +19,15 @@ chaves em cada revisão, sem os valores.
 Para usar na API: `build_application(memory=SQLiteMemory("..."))` (composição em `backend/api/main.py`).
 O arquivo `.db` não deve ser versionado.
 
+## Memória do cliente — `SQLiteCustomerMemory` (implementa `CustomerMemoryPort`)
+
+Pedidos feitos ao bot em cada atendimento, por `(tenant_id, client_id)`: só prato, quantidade, orçamento,
+atendimento e data — sem nome, contato ou endereço. **Não são compras confirmadas** (o bot não vê a compra).
+`profile()` calcula atendimentos, pratos favoritos (2+ atendimentos), último pedido e orçamento típico por
+pessoa (mediana). `forget()` apaga o histórico do cliente. Os agentes usam a instância padrão
+`default_customer_memory()` (uma por processo, em memória: vale enquanto a API estiver no ar); para
+persistir em arquivo, passe `SQLiteCustomerMemory("<arquivo>.db")` em `build_orchestrator(customers=...)`.
+
 ## Conhecimento comercial (RAG) — `MarkdownKnowledgeBase` (implementa `KnowledgePort`)
 
 Documentos em `knowledge/*.md` (todos de DEMONSTRAÇÃO). Cada seção `## ...` vira um trecho buscável;

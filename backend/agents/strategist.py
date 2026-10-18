@@ -34,7 +34,16 @@ class SalesStrategist:
             ctx.events.pattern_identified(
                 "sales_strategist", "Preferência declarada: " + ", ".join(st.constraints.preferences),
                 "stated_preference", len(st.constraints.preferences), "medium")
-        history = DEMO_PURCHASE_HISTORY.get(session.client_id or "") if session.mode == "demo" else None
+        profile = st.customer_profile
+        if profile is not None and profile.favorite_dishes:  # histórico real de pedidos feitos ao bot
+            dish, times = profile.favorite_dishes[0]
+            terms += dish.split()
+            basis = basis or "stated_preference"
+            ctx.events.pattern_identified(
+                "sales_strategist", f"Em atendimentos anteriores pediu {dish} ({times} vezes)",
+                "stated_preference", times, "medium" if times >= 3 else "low")
+        history = (DEMO_PURCHASE_HISTORY.get(session.client_id or "")
+                   if session.mode == "demo" and not (profile and profile.favorite_dishes) else None)
         if history:
             terms += history["favorite_terms"]
             basis = basis or "demo"
@@ -57,7 +66,7 @@ class SalesStrategist:
                                "low")
         rest = [r for r in st.recommendations if r not in favored]
         st.recommendations = favored + rest
-        source = "histórico DEMO" if basis == "demo" else "preferência declarada"
+        source = {"demo": "histórico DEMO"}.get(basis or "", "preferência declarada/pedidos anteriores")
         if ctx.knowledge is not None:  # fundamenta a personalização na estratégia aprovada (RAG)
             hits = ctx.knowledge.search(session.tenant_id, "personalização preferência histórico padrão de compra",
                                         ("personalização",), k=1)

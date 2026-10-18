@@ -34,6 +34,7 @@ orch.catalog()       # list[dict] AgentDefinition, para GET /agents
 | `AgentRuntimePort.run(RuntimeCall) -> RuntimeOutcome` | integrations | OpenCode + Gemini + MCP |
 | `EventSink.emit(...)` | integrations | atribui `event_id`/`seq`/`tenant_id`/`mode`/`occurred_at`, persiste e só então transmite |
 | `MemoryPort.load / save_patch` | memory | estado por atendimento, com revisão (`RevisionConflict`) |
+| `CustomerMemoryPort.record_request / profile / forget` | memory | histórico por cliente; `build_orchestrator` usa o padrão de `backend.memory` (passe `customers=None` para desligar) |
 | `KnowledgePort.search(tenant_id, query, topics, k) -> list[KnowledgeHit]` | memory | RAG sobre documentos comerciais; `build_orchestrator` usa a base padrão de `backend.memory` (passe `knowledge=None` para desligar) |
 
 ### `RuntimeCall` (entrada)
@@ -90,6 +91,14 @@ mais de 5 min (`SEARCH_TTL_S`, igual às evidências da integração; não conge
 `ifood_mcp`. Memória: `last_search` = `{signature, at, count}`, gravado só após pesquisa bem-sucedida.
 O gestor vê `agent_message` "Pesquisa reaproveitada, sem nova busca".
 
+## Memória do cliente (entre atendimentos)
+Com `client_id` (sessões anônimas não são lembradas): ao fim de um pedido com prato e recomendação
+aprovada, o orquestrador registra prato/quantidade/orçamento (`memory_changed`, `scope: "customer"`, só
+na primeira vez por atendimento). Num atendimento novo, "oi" responde "Da última vez você pediu X. Quer
+pedir o mesmo?"; "quero o mesmo"/"de novo"/"o de sempre" repete o último prato com a mesma quantidade e
+orçamento. O estrategista prioriza o prato favorito (2+ atendimentos) com `pattern_identified`
+`basis: "stated_preference"`; o histórico fictício DEMO só entra se não houver histórico real.
+
 ## Conversa (`chat.py`)
 Classificação por regras, sem LLM. Só mensagens de **pedido** (comida, orçamento, pessoas) rodam
 a esteira e chamam o runtime. Saudação, agradecimento, despedida, pedido vago, dúvida e texto
@@ -110,7 +119,7 @@ memória), follow-ups também contam como pedido.
 ## Eventos emitidos
 `agent_status`, `agent_message` (`request|proposal|review|resolution`), `tool_activity`
 (emitido após a chamada), `conflict_detected`, `decision_made`, `recommendations_ready`,
-`knowledge_retrieved`, `pattern_identified`, `discount_proposed`,
+`knowledge_retrieved`, `pattern_identified`, `discount_proposed`, `memory_changed`,
 `chat_message` (assistente), `error` (códigos em `failures.py`: `IFOOD_AUTH_REQUIRED`, `LOCATION_REQUIRED`,
 `SEARCH_QUERY_INVALID`, `IFOOD_TOOL_UNAVAILABLE`, `IFOOD_UNAVAILABLE`, `LLM_QUOTA`, `LLM_TIMEOUT`,
 `LLM_INVALID_OUTPUT`, `AGENT_ERROR`). O `detail` do runtime só escolhe a mensagem ao cliente; nunca é

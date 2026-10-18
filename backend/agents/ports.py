@@ -108,3 +108,35 @@ class KnowledgePort(Protocol):
     """Busca em documentos comerciais da empresa (políticas, estratégias). Implementação: backend/memory."""
 
     def search(self, tenant_id: str, query: str, topics: tuple[str, ...] = (), k: int = 3) -> list[KnowledgeHit]: ...
+
+
+# ---- memória do cliente (entre atendimentos) ----------------------------------------
+@dataclass(frozen=True)
+class CustomerProfile:
+    """Padrões calculados dos pedidos feitos ao bot em atendimentos anteriores (não são compras
+    confirmadas). Sem dados pessoais: só prato, quantidade, orçamento e datas."""
+
+    client_id: str
+    requests: int  # atendimentos com pedido registrado
+    favorite_dishes: tuple[tuple[str, int], ...]  # (prato, atendimentos) com 2+ ocorrências
+    last_terms: tuple[str, ...]
+    last_party_size: int | None
+    last_budget_cents: int | None
+    last_at: str | None  # ISO 8601 UTC
+    typical_budget_per_person_cents: int | None
+
+
+@runtime_checkable
+class CustomerMemoryPort(Protocol):
+    """Histórico autorizado por cliente. Implementação: backend/memory."""
+
+    def record_request(self, tenant_id: str, client_id: str, session_id: str, terms: tuple[str, ...],
+                       party_size: int | None, budget_cents: int | None) -> bool:
+        """Registra o pedido do atendimento; True se é um pedido novo, False se só atualizou."""
+        ...
+
+    def profile(self, tenant_id: str, client_id: str) -> CustomerProfile | None: ...
+
+    def forget(self, tenant_id: str, client_id: str) -> int:
+        """Apaga o histórico do cliente (correção/remoção); devolve quantos registros saíram."""
+        ...
