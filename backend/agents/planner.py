@@ -63,6 +63,11 @@ def build_recommendation(merchant: Offer, picked: list[tuple[Offer, int]], origi
     }
 
 
+def _same_items(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    key = lambda r: sorted((i["product_id"], i["quantity"]) for i in r["items"])  # noqa: E731
+    return a["merchant_id"] == b["merchant_id"] and key(a) == key(b)
+
+
 class Planner:
     definition = AgentDefinition(
         "planner", "Planejador de compra", "Combinação de pedidos",
@@ -108,7 +113,7 @@ class Planner:
                     continue
                 else:
                     reasons.append("Dentro do orçamento")
-                if any(r["items"] == rec["items"] and r["merchant_id"] == rec["merchant_id"] for r in recs):
+                if any(_same_items(r, rec) for r in recs):
                     continue
                 recs.append(rec)
         recs.sort(key=lambda r: (r["total_cents"] is None, r["total_cents"] or r["subtotal_cents"]))

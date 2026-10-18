@@ -2,16 +2,18 @@
 from __future__ import annotations
 
 from .auditor import Auditor
+from .discount import DiscountSpecialist
 from .orchestrator import Orchestrator
 from .planner import Planner
 from .ports import AgentRuntimePort, EventSink, MemoryPort
 from .registry import AgentRegistry
 from .researcher import Researcher
+from .strategist import SalesStrategist
 
 
 def build_registry() -> AgentRegistry:
     registry = AgentRegistry()
-    for agent in (Researcher(), Planner(), Auditor()):
+    for agent in (Researcher(), Planner(), Auditor(), SalesStrategist(), DiscountSpecialist()):
         registry.register(agent)
     return registry
 

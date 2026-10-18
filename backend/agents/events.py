@@ -18,6 +18,12 @@ PAYLOAD_KEYS: dict[str, frozenset[str]] = {
     "decision_made": frozenset({"decision_id", "recommendation_id", "summary", "reasons", "limitations"}),
     "recommendations_ready": frozenset({"recommendations"}),
     "error": frozenset({"code", "message", "retryable"}),
+    "knowledge_retrieved": frozenset({"query_id", "topics", "sources", "count"}),
+    "pattern_identified": frozenset(
+        {"pattern_id", "description", "basis", "evidence_count", "confidence"}),
+    "discount_proposed": frozenset(
+        {"proposal_id", "recommendation_id", "discount_type", "discount_bps", "discount_cents",
+         "estimated_profit_delta_cents", "status", "requires_approval", "reason"}),
 }
 CHANNELS = {"request", "proposal", "review", "resolution"}
 
@@ -89,3 +95,22 @@ class EventEmitter:
     def error(self, code: str, message: str, retryable: bool) -> None:
         self._emit("error", agent(ORCHESTRATOR_ID), None, "admin",
                    {"code": code, "message": message, "retryable": retryable})
+
+    def knowledge_retrieved(self, agent_id: str, topics: list[str], sources: list[dict[str, str]]) -> None:
+        self._emit("knowledge_retrieved", agent(agent_id), None, "admin",
+                   {"query_id": new_id("kq"), "topics": topics, "sources": sources, "count": len(sources)})
+
+    def pattern_identified(self, agent_id: str, description: str, basis: str, evidence_count: int,
+                           confidence: str) -> None:
+        self._emit("pattern_identified", agent(agent_id), None, "admin",
+                   {"pattern_id": new_id("pat"), "description": description, "basis": basis,
+                    "evidence_count": evidence_count, "confidence": confidence})
+
+    def discount_proposed(self, agent_id: str, recommendation_id: str, discount_bps: int,
+                          discount_cents: int, profit_delta_cents: int | None, reason: str) -> None:
+        """Sempre `suggested` + `requires_approval`: sugerir não é aplicar."""
+        self._emit("discount_proposed", agent(agent_id), None, "admin",
+                   {"proposal_id": new_id("disc"), "recommendation_id": recommendation_id,
+                    "discount_type": "percent", "discount_bps": discount_bps,
+                    "discount_cents": discount_cents, "estimated_profit_delta_cents": profit_delta_cents,
+                    "status": "suggested", "requires_approval": True, "reason": reason})

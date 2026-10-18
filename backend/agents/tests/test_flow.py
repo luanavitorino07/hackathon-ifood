@@ -236,6 +236,63 @@ class ConstraintsTest(unittest.TestCase):
         self.assertEqual(orch.handle_message(ctx).session_status, "active")
 
 
+PIZZA_ONLY = [{"product_id": "pz", "name": "Pizza grande", "unit_price_cents": 5990, "merchant_id": "pz_m",
+               "merchant_name": "Pizzaria", "tags": [], "delivery_fee_cents": 800, "other_fees_cents": 0,
+               "eta_minutes": 40}]
+
+
+class CommercialTest(unittest.TestCase):
+    def test_discount_is_suggested_to_manager_only_and_never_applied(self):
+        orch, ctx, sink, _ = make("quero pizza para 2 pessoas até R$ 200", FakeRuntime(offers=PIZZA_ONLY))
+        out = orch.handle_message(ctx)
+        types = sink.types()
+        self.assertLess(types.index("knowledge_retrieved"), types.index("discount_proposed"))
+        disc = [e for e in sink.events if e["type"] == "discount_proposed"][0]
+        p = disc["payload"]
+        self.assertEqual((p["status"], p["requires_approval"], disc["visibility"]), ("suggested", True, "admin"))
+        self.assertEqual(p["discount_cents"], 2 * 5990 * 500 // 10000)
+        self.assertGreater(p["estimated_profit_delta_cents"], 0)
+        rec = out.recommendations[0]
+        self.assertEqual((rec["discount_cents"], rec["total_cents"]), (0, 2 * 5990 + 800))
+        self.assertNotIn("desconto", out.reply_text.lower())
+
+    def test_no_discount_in_real_mode(self):
+        orch, ctx, sink, _ = make("quero pizza para 2 pessoas até R$ 200",
+                                  FakeRuntime(offers=PIZZA_ONLY, provider="ifood_mcp"), mode="real")
+        orch.handle_message(ctx)
+        self.assertNotIn("discount_proposed", sink.types())
+
+    def test_no_discount_below_policy_minimum(self):
+        orch, ctx, sink, _ = make("quero um lanche até R$ 200")
+        orch.handle_message(ctx)
+        self.assertNotIn("discount_proposed", sink.types())
+
+    def test_stated_preference_puts_matching_option_first_and_tells_customer(self):
+        orch, ctx, sink, _ = make("quero comida para 2 pessoas até R$ 200")
+        ctx = SessionContext("sess_1", "t", None, "demo", ctx.message_text,
+                             initial_context={"preferences": ["pizza"], "restrictions": []})
+        out = orch.handle_message(ctx)
+        self.assertEqual(out.recommendations[0]["merchant_name"], "Pizzaria Demo")
+        self.assertIn("preferência: pizza", out.reply_text)
+        pat = [e["payload"] for e in sink.events if e["type"] == "pattern_identified"]
+        self.assertEqual(pat[0]["basis"], "stated_preference")
+
+    def test_demo_history_only_for_demo_client_in_demo_mode(self):
+        orch, ctx, sink, _ = make("quero comida para 2 pessoas até R$ 200")
+        orch.handle_message(SessionContext("sess_1", "t", "client_demo_1", "demo", ctx.message_text))
+        self.assertIn("demo", [e["payload"]["basis"] for e in sink.events if e["type"] == "pattern_identified"])
+        orch2, ctx2, sink2, _ = make("quero comida para 2 pessoas até R$ 200",
+                                     FakeRuntime(provider="ifood_mcp"), mode="real")
+        orch2.handle_message(SessionContext("sess_1", "t", "client_demo_1", "real", ctx2.message_text))
+        self.assertNotIn("pattern_identified", sink2.types())
+
+    def test_no_duplicate_recommendations(self):
+        orch, ctx, _, _ = make("quero comida para 2 pessoas até R$ 200")
+        recs = orch.handle_message(ctx).recommendations
+        keys = [(r["merchant_id"], sorted((i["product_id"], i["quantity"]) for i in r["items"])) for r in recs]
+        self.assertEqual(len(keys), len({str(k) for k in keys}))
+
+
 class FailureMessageTest(unittest.TestCase):
     def run_with(self, error, detail):
         orch, ctx, sink, _ = make("quero pizza", FakeRuntime(error=error, detail=detail))

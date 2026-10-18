@@ -77,9 +77,18 @@ sessão em `waiting_customer`. Pedido de "mais barato" só aceita opções com t
 (`shown`); se não houver, o bot diz que aquela já é a mais barata em vez de repetir. Com pedido em andamento (`conversation.stage = "ordering"` na
 memória), follow-ups também contam como pedido.
 
+## Estratégia e desconto (dados DEMO, `commercial.py`)
+- **Estrategista de vendas:** só reordena propostas já aprovadas pelo auditor, por preferência declarada
+  (`initial_context.preferences`) e, em sessão `demo`, pelo histórico fictício de `client_demo_1`.
+  Emite `pattern_identified` (`stated_preference` ou `demo`) e conta ao cliente o motivo.
+- **Especialista em descontos:** só em sessão `demo`. Consulta a política DEMO (`knowledge_retrieved`) e,
+  se o lucro esperado sob as hipóteses DEMO melhorar, emite `discount_proposed` com `status="suggested"` e
+  `requires_approval=true`, visível só ao gestor. O desconto **não** entra no total nem na fala ao cliente.
+
 ## Eventos emitidos
 `agent_status`, `agent_message` (`request|proposal|review|resolution`), `tool_activity`
 (emitido após a chamada), `conflict_detected`, `decision_made`, `recommendations_ready`,
+`knowledge_retrieved`, `pattern_identified`, `discount_proposed`,
 `chat_message` (assistente), `error` (códigos em `failures.py`: `IFOOD_AUTH_REQUIRED`, `LOCATION_REQUIRED`,
 `SEARCH_QUERY_INVALID`, `IFOOD_TOOL_UNAVAILABLE`, `IFOOD_UNAVAILABLE`, `LLM_QUOTA`, `LLM_TIMEOUT`,
 `LLM_INVALID_OUTPUT`, `AGENT_ERROR`). O `detail` do runtime só escolhe a mensagem ao cliente; nunca é
@@ -98,4 +107,4 @@ pode guardá-las como JSON opaco.
 dados saem com `provider="demo"`/`data_origin="demo"` e nunca são promovidos a `ifood_mcp`.
 
 ## Fora do escopo atual
-Estratégia de vendas, desconto, RAG, padrões de compra e controle de cota (este é do runtime).
+RAG real, padrões de compra a partir de histórico real e controle de cota (este é do runtime).

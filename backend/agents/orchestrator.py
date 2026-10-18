@@ -152,6 +152,9 @@ class Orchestrator:
         text = f"Sugiro {rec['merchant_name']}: {items}. Total {total}"
         if rec["total_cents"] is None:
             text += " (sem taxas, que ainda não foram informadas)"
+        liked = next((r for r in rec["reasons"] if r.startswith("Combina com sua preferência")), None)
+        if liked:
+            text += f". {liked}"
         notes = [w for w in rec["warnings"] if "não comprovada" in w or w.startswith("Taxa de serviço")]
         if notes:
             text += ". Atenção: " + "; ".join(notes)
