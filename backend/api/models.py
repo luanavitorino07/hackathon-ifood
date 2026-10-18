@@ -115,6 +115,8 @@ class CartItem(StrictModel):
     name: NonEmptyStr
     quantity: PositiveInt
     unit_price_cents: NonNegativeInt
+    original_unit_price_cents: NonNegativeInt | None = None
+    image_url: NonEmptyStr | None = None
 
 
 class Recommendation(StrictModel):
@@ -129,6 +131,10 @@ class Recommendation(StrictModel):
     discount_cents: NonNegativeInt
     total_cents: NonNegativeInt | None
     eta_minutes: NonNegativeInt | None
+    eta_min_minutes: NonNegativeInt | None = None
+    distance_km: Annotated[float, Field(ge=0)] | None = None
+    merchant_rating: Annotated[float, Field(ge=0, le=5)] | None = None
+    is_open: bool | None = None
     reasons: list[NonEmptyStr]
     warnings: list[NonEmptyStr]
     data_origin: Literal["ifood_mcp", "demo"]
@@ -149,6 +155,18 @@ class Recommendation(StrictModel):
                 raise ValueError("total_cents não corresponde aos componentes")
         elif self.total_cents is not None:
             raise ValueError("total_cents exige todos os componentes conhecidos")
+        if (
+            self.eta_min_minutes is not None
+            and self.eta_minutes is not None
+            and self.eta_min_minutes > self.eta_minutes
+        ):
+            raise ValueError("eta_min_minutes não pode exceder eta_minutes")
+        for item in self.items:
+            if (
+                item.original_unit_price_cents is not None
+                and item.original_unit_price_cents < item.unit_price_cents
+            ):
+                raise ValueError("preço original não pode ser menor que o preço atual")
         return self
 
 

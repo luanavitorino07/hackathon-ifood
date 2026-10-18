@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from importlib import import_module
+from math import isfinite
 from time import monotonic
 from typing import Any, Literal, Protocol
 
@@ -26,6 +27,7 @@ from .errors import (
 )
 from .opencode_client import OpenCodeClient, OpenCodeRunResult
 from .search_quality import (
+    CLOSED_TEST_TAG,
     SearchEvidenceStore,
     SearchIntent,
     normalized_text,
@@ -52,7 +54,12 @@ class _RuntimeCallLike(Protocol):
 class _OpenCodePort(Protocol):
     async def list_tool_ids(self) -> list[str]: ...
 
-    async def create_session(self, *, title: str | None = None) -> str: ...
+    async def create_session(
+        self,
+        *,
+        title: str | None = None,
+        allow_search: bool = True,
+    ) -> str: ...
 
     async def run_prompt(
         self,
@@ -112,11 +119,14 @@ class OpenCodeAgentRuntime:
         sandbox_location: SandboxLocation | None = None,
         client_factory: Callable[[], _OpenCodePort] | None = None,
         evidence_store: SearchEvidenceStore | None = None,
+        include_closed_for_testing: bool = False,
     ) -> None:
         self._settings = settings
         self._sandbox_location = sandbox_location
         self._client_factory = client_factory or (lambda: OpenCodeClient(settings))
         self._evidence = evidence_store or SearchEvidenceStore()
+        self._include_closed_for_testing = include_closed_for_testing
+        self._quota_until = 0.0
 
     def recommendation_warnings(
         self,
@@ -125,6 +135,14 @@ class OpenCodeAgentRuntime:
         product_ids: Sequence[str],
     ) -> list[str]:
         return self._evidence.recommendation_warnings(session_id, merchant_id, product_ids)
+
+    def recommendation_details(
+        self,
+        session_id: str,
+        merchant_id: str,
+        product_ids: Sequence[str],
+    ) -> dict[str, Any]:
+        return self._evidence.recommendation_details(session_id, merchant_id, product_ids)
 
     def run(self, call: _RuntimeCallLike) -> Any:
         """Executa a chamada síncrona exigida por ``AgentRuntimePort``."""
@@ -152,6 +170,10 @@ class OpenCodeAgentRuntime:
         )
 
     async def _execute(self, call: _RuntimeCallLike) -> _ExecutionResult:
+        if monotonic() < self._quota_until:
+            return _failure("quota", "quota_exceeded", retry_after_s=30)
+        if not call.allowed_tools and call.max_tool_calls == 0:
+            return await self._execute_reasoning(call)
         if _LOGICAL_TOOL not in call.allowed_tools:
             return _failure("invalid_output", "tool_not_allowed")
         if call.max_tool_calls < 1:
@@ -176,8 +198,14 @@ class OpenCodeAgentRuntime:
             session_id = await client.create_session(title=f"{call.agent_id}:{call.task_id}"[:120])
             response = await client.run_prompt(
                 session_id,
+                agent=self._settings.search_agent,
                 system=call.system,
-                prompt=_build_search_prompt(call.prompt, location, dietary),
+                prompt=_build_search_prompt(
+                    call.prompt,
+                    location,
+                    dietary,
+                    only_open=not self._include_closed_for_testing,
+                ),
                 tools=enabled_tools,
                 timeout_seconds=call.timeout_s,
             )
@@ -188,9 +216,16 @@ class OpenCodeAgentRuntime:
             )
             payload = _tool_payload(part)
             _raise_mcp_error(payload)
-            _validate_tool_input(part, location=location, dietary=dietary, only_open=True)
+            only_open = not self._include_closed_for_testing
+            _validate_tool_input(part, location=location, dietary=dietary, only_open=only_open)
             intent.validate_query(part["state"]["input"]["query"])
-            offers, mismatches = select_matching_offers(_map_offers(payload), intent)
+            offers, mismatches = select_matching_offers(
+                _map_offers(
+                    payload,
+                    include_closed_for_testing=self._include_closed_for_testing,
+                ),
+                intent,
+            )
             duration_ms = _tool_duration_ms(part)
             if duration_ms is None:
                 duration_ms = max(0, round((monotonic() - started_at) * 1000))
@@ -202,7 +237,7 @@ class OpenCodeAgentRuntime:
                 offers,
                 public_location=resolved_location.source == "public_test",
                 customization=intent.customization_requested,
-                only_open=True,
+                only_open=only_open,
             )
             trace = _TraceData(
                 call_id=call_id,
@@ -212,7 +247,12 @@ class OpenCodeAgentRuntime:
                 duration_ms=duration_ms,
                 summary=(
                     _trace_summary(len(offers), resolved_location.source)
-                    + " Filtro oficial onlyOpen aplicado na consulta."
+                    + (
+                        " Filtro oficial onlyOpen aplicado na consulta."
+                        if only_open
+                        else " Modo local de teste: restaurantes fechados podem ser exibidos, "
+                        "sem disponibilidade para pedido."
+                    )
                     + (
                         f" {mismatches} item(ns) sem correspondência textual descartado(s)."
                         if mismatches
@@ -239,9 +279,52 @@ class OpenCodeAgentRuntime:
                 except Exception:
                     pass
             retry_after = 30 if isinstance(exc, QuotaError) else None
+            if retry_after is not None:
+                self._quota_until = monotonic() + retry_after
             return _failure(exc.code, _safe_detail(exc), retry_after_s=retry_after)
         except (TypeError, ValueError, KeyError, json.JSONDecodeError):
             return _failure("invalid_output", "invalid_mcp_response")
+        finally:
+            await client.aclose()
+
+    async def _execute_reasoning(self, call: _RuntimeCallLike) -> _ExecutionResult:
+        """Raciocínio sem MCP: só a ferramenta interna de serialização do JSON."""
+
+        client = self._client_factory()
+        session_id = None
+        try:
+            session_id = await client.create_session(
+                title=f"{call.agent_id}:{call.task_id}"[:120],
+                allow_search=False,
+            )
+            response = await client.run_prompt(
+                session_id,
+                agent=self._settings.reasoning_agent,
+                system=call.system,
+                prompt=call.prompt,
+                tools={"*": False, "StructuredOutput": True},
+                output_schema=call.output_schema,
+                timeout_seconds=call.timeout_s,
+            )
+            if not isinstance(response.structured_output, Mapping):
+                raise InvalidOutputError("invalid_model_output", retryable=False)
+            return _ExecutionResult(
+                ok=True,
+                structured=dict(response.structured_output),
+                traces=(),
+            )
+        except IntegrationError as exc:
+            if session_id is not None and isinstance(exc, RuntimeTimeoutError):
+                try:
+                    await client.abort_session(session_id)
+                except Exception:
+                    pass
+            retry_after = 30 if isinstance(exc, QuotaError) else None
+            if retry_after is not None:
+                self._quota_until = monotonic() + retry_after
+            return _failure(exc.code, _safe_detail(exc), retry_after_s=retry_after)
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+            return _failure("invalid_output", "invalid_model_output")
         finally:
             await client.aclose()
 
@@ -264,6 +347,7 @@ def _safe_detail(exc: IntegrationError) -> str:
     allowed = {
         "auth_required",
         "invalid_mcp_response",
+        "invalid_model_output",
         "invalid_query",
         "location_required",
         "mcp_error",
@@ -360,6 +444,8 @@ def _build_search_prompt(
     agent_prompt: str,
     location: Mapping[str, float],
     dietary: Sequence[str],
+    *,
+    only_open: bool = True,
 ) -> str:
     required_terms = sorted(SearchIntent.from_prompt(agent_prompt).terms)
     dietary_instruction = (
@@ -368,21 +454,15 @@ def _build_search_prompt(
         else "Não envie refinements.itemRestrictions. "
     )
     return (
-        "Execute exatamente uma chamada à tool searchOffers do MCP do iFood. "
-        "Busque itens (resultKind ITEM), nunca merchants. Use exatamente "
+        "Uma chamada searchOffers: resultKind=ITEM, merchantType=RESTAURANT, "
+        "pageSize=20, refinements.sort=RELEVANCE. Use exatamente "
         f"userLocation={json.dumps(dict(location), ensure_ascii=False)}. "
         f"{dietary_instruction}"
-        "Use refinements.onlyOpen=true para retornar apenas lojas abertas agora. "
-        "Não use localização inferida e não chame outras tools. "
-        "A query deve preservar o prato e qualificadores explícitos do pedido: "
-        "não reduza um prato específico ao ingrediente, não substitua por similares "
-        "e não use uma lista fixa de comidas. Preserve pedidos de personalização "
-        "como pedidos ainda não confirmados; não invente ingredientes ou adicionais. "
-        "Não afirme que uma loja está aberta, próxima ou personaliza sem evidência. "
-        "Termos obrigatórios da query (grafias equivalentes são aceitas): "
-        f"{json.dumps(required_terms)}. "
-        "Use pageSize=20 (máximo oficial 25) e merchantType=RESTAURANT. "
-        "Depois da ferramenta, responda somente OK. Pedido:\n"
+        f"Use refinements.onlyOpen={'true' if only_open else 'false'}. "
+        "Preserve o prato na query, sem pessoas/orçamento; não troque por ingrediente ou sabor. "
+        f"Termos obrigatórios: {json.dumps(required_terms)}. "
+        "Sem outras tools, inferência de endereço ou personalização não confirmada. "
+        "Após a ferramenta responda só OK. Pedido:\n"
         f"{agent_prompt}"
     )
 
@@ -420,7 +500,7 @@ def _validate_tool_input(
     *,
     location: Mapping[str, float],
     dietary: Sequence[str],
-    only_open: bool = False,
+    only_open: bool | None = None,
 ) -> None:
     state = part.get("state")
     if not isinstance(state, Mapping):
@@ -442,9 +522,12 @@ def _validate_tool_input(
             raise InvalidOutputError("invalid_mcp_response")
         if float(actual) != location[coordinate]:
             raise InvalidOutputError("invalid_mcp_response")
-    if only_open:
+    if only_open is not None:
         refinements = tool_input.get("refinements")
-        if not isinstance(refinements, Mapping) or refinements.get("onlyOpen") is not True:
+        if (
+            not isinstance(refinements, Mapping)
+            or refinements.get("onlyOpen") is not only_open
+        ):
             raise InvalidOutputError("invalid_mcp_response")
     if dietary:
         refinements = tool_input.get("refinements")
@@ -510,7 +593,11 @@ def _raise_mcp_error(payload: Mapping[str, Any]) -> None:
     raise error_type(detail, retryable=retryable)
 
 
-def _map_offers(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _map_offers(
+    payload: Mapping[str, Any],
+    *,
+    include_closed_for_testing: bool = False,
+) -> list[dict[str, Any]]:
     if payload.get("resultKind") != "ITEM":
         raise InvalidOutputError("invalid_mcp_response")
     raw_results = payload.get("results")
@@ -523,36 +610,65 @@ def _map_offers(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
             continue
         try:
             merchant = _required_mapping(raw, "merchant")
-            if merchant.get("isOpen") is False:
+            closed_for_testing = merchant.get("isOpen") is False
+            if closed_for_testing and not include_closed_for_testing:
                 closed_filtered += 1
                 continue
             delivery = _required_mapping(merchant, "deliveryMethod")
             price = raw.get("promotionalUnitPrice")
             if price is None:
                 price = raw["unitPrice"]
+            effective_price_cents = _brl_to_cents(price)
+            original_price_cents = _brl_to_cents(raw["unitPrice"])
             fee = delivery.get("promotionalFee")
             if fee is None:
                 fee = delivery.get("fee")
             estimate = delivery.get("estimatedMinutes")
             eta = None
+            eta_min = None
             if isinstance(estimate, Mapping):
+                eta_min = _non_negative_int(estimate.get("min"))
                 eta = _non_negative_int(estimate.get("max"))
                 if eta is None:
-                    eta = _non_negative_int(estimate.get("min"))
+                    eta = eta_min
+                elif eta_min is not None and eta_min > eta:
+                    eta_min = None
+            distance_km = _optional_decimal(
+                merchant.get("distanceKm", raw.get("distanceKm")),
+                minimum=0,
+            )
+            merchant_rating = _optional_decimal(merchant.get("rating"), minimum=0, maximum=5)
+            image_url = raw.get("imageUrl")
+            if not isinstance(image_url, str) or not image_url.startswith(("http://", "https://")):
+                image_url = None
             offers.append(
                 {
                     "product_id": _required_text(raw, "itemId"),
                     "name": _required_text(raw, "itemName"),
-                    "unit_price_cents": _brl_to_cents(price),
+                    "unit_price_cents": effective_price_cents,
+                    "original_unit_price_cents": (
+                        original_price_cents
+                        if original_price_cents > effective_price_cents
+                        else None
+                    ),
+                    "image_url": image_url,
                     "merchant_id": _required_text(merchant, "merchantId"),
                     "merchant_name": _required_text(merchant, "merchantName"),
-                    "tags": [],
+                    "tags": [CLOSED_TEST_TAG] if closed_for_testing else [],
                     "delivery_fee_cents": None if fee is None else _brl_to_cents(fee),
                     "other_fees_cents": None,
                     "eta_minutes": eta,
+                    "eta_min_minutes": eta_min,
+                    "distance_km": distance_km,
+                    "merchant_rating": merchant_rating,
+                    "_merchant_is_open": (
+                        merchant["isOpen"]
+                        if isinstance(merchant.get("isOpen"), bool)
+                        else None
+                    ),
                     **(
                         {"is_open": merchant["isOpen"]}
-                        if isinstance(merchant.get("isOpen"), bool)
+                        if isinstance(merchant.get("isOpen"), bool) and not closed_for_testing
                         else {}
                     ),
                 }
@@ -594,6 +710,25 @@ def _non_negative_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return None
     return value
+
+
+def _optional_decimal(
+    value: Any,
+    *,
+    minimum: float,
+    maximum: float | None = None,
+) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str, Decimal)):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(parsed) or parsed < minimum or (
+        maximum is not None and parsed > maximum
+    ):
+        return None
+    return parsed
 
 
 def _tool_duration_ms(part: Mapping[str, Any]) -> int | None:

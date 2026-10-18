@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
+import ipaddress
+import secrets
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -11,6 +14,8 @@ from importlib import import_module
 from typing import Any, Iterator, Literal, Protocol
 
 from fastapi import Request
+
+from backend.integrations.search_quality import CLOSED_TEST_ONLY
 
 from .models import Actor, AgentDefinition, ChatMessageRequest, SubmitOrderRequest
 
@@ -39,12 +44,61 @@ class DemoCustomerIdentityResolver:
 
 
 class DemoIdentityResolver(DemoCustomerIdentityResolver):
-    """Perfis fictícios para demonstração local; não é autenticação real."""
+    """Perfis fictícios para demonstração local; não é autenticação real.
+
+    Em modo real, o papel administrativo só pode ser habilitado explicitamente e
+    apenas em conexões realmente locais. Um cookie de sessão opaco permite que o
+    ``EventSource`` do navegador preserve o papel depois de uma primeira chamada
+    ``fetch`` com ``X-Demo-Role: admin``.
+    """
+
+    cookie_name = "ifood_local_demo_admin"
+
+    def __init__(
+        self,
+        *,
+        mode: Literal["real", "demo"] = "demo",
+        allow_real_admin: bool = False,
+        cookie_token: str | None = None,
+    ) -> None:
+        self._mode = mode
+        self._allow_real_admin = allow_real_admin
+        self._cookie_token = cookie_token or secrets.token_urlsafe(32)
 
     async def resolve(self, request: Request) -> RequestIdentity:
-        if request.headers.get("x-demo-role") == "admin":
+        header_admin = request.headers.get("x-demo-role") == "admin"
+        cookie_admin = hmac.compare_digest(
+            request.cookies.get(self.cookie_name, ""),
+            self._cookie_token,
+        )
+        if (header_admin or cookie_admin) and self._admin_is_allowed(request):
+            if header_admin:
+                request.state.issue_local_demo_admin_cookie = self._cookie_token
             return RequestIdentity("tenant_demo", "manager_demo_1", "admin")
         return await super().resolve(request)
+
+    def _admin_is_allowed(self, request: Request) -> bool:
+        if self._mode == "demo":
+            return True
+        return self._allow_real_admin and _is_loopback_request(request)
+
+
+def _is_loopback_request(request: Request) -> bool:
+    """Não confia em cabeçalhos de proxy para conceder o papel administrativo."""
+
+    if request.client is None or not _is_loopback_host(request.client.host):
+        return False
+    hostname = request.url.hostname
+    return hostname is not None and _is_loopback_host(hostname)
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +185,9 @@ class StateEventSink:
             "agent_event_binding", default=None
         )
         self.catalog_warning_lookup: Callable[[str, str, list[str]], list[str]] | None = None
+        self.catalog_detail_lookup: (
+            Callable[[str, str, list[str]], dict[str, Any]] | None
+        ) = None
         self._catalog_notes: ContextVar[tuple[str, ...]] = ContextVar("catalog_notes", default=())
 
     @contextmanager
@@ -158,19 +215,38 @@ class StateEventSink:
         if binding is None:
             raise RuntimeError("StateEventSink precisa estar vinculado a uma mensagem")
         if type == "recommendations_ready" and self.catalog_warning_lookup is not None:
-            # Enriquece apenas warnings do contrato v1; não muda preços nem o payload dos agentes.
+            # Enriquece apenas com evidência verificada da mesma busca; não aceita dados da IA.
             recommendations = []
             customer_notes = []
             for recommendation in payload["recommendations"]:
+                product_ids = [item["product_id"] for item in recommendation["items"]]
                 notes = self.catalog_warning_lookup(
                     session_id,
                     recommendation["merchant_id"],
-                    [item["product_id"] for item in recommendation["items"]],
+                    product_ids,
                 )
+                details = (
+                    self.catalog_detail_lookup(
+                        session_id,
+                        recommendation["merchant_id"],
+                        product_ids,
+                    )
+                    if self.catalog_detail_lookup is not None
+                    else {}
+                )
+                item_details = details.get("items", {})
                 customer_notes.extend(notes)
                 recommendations.append(
                     {
                         **recommendation,
+                        "items": [
+                            {**item, **item_details.get(item["product_id"], {})}
+                            for item in recommendation["items"]
+                        ],
+                        "eta_min_minutes": details.get("eta_min_minutes"),
+                        "distance_km": details.get("distance_km"),
+                        "merchant_rating": details.get("merchant_rating"),
+                        "is_open": details.get("is_open"),
                         "warnings": list(dict.fromkeys(recommendation["warnings"] + notes)),
                     }
                 )
@@ -179,13 +255,20 @@ class StateEventSink:
         if type == "chat_message" and self._catalog_notes.get():
             message = payload["message"]
             if message["role"] == "assistant":
+                availability_notice = (
+                    " Esta opção é somente para teste: o restaurante estava fechado no "
+                    "momento da consulta e não está disponível para pedido."
+                    if CLOSED_TEST_ONLY in self._catalog_notes.get()
+                    else ""
+                )
                 payload = {
                     **payload,
                     "message": {
                         **message,
                         "text": message["text"]
                         + " Preço, disponibilidade e personalização precisam ser confirmados "
-                        "antes de comprar.",
+                        "antes de comprar."
+                        + availability_notice,
                     },
                 }
         operation = self._state.publish_event(

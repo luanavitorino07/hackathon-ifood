@@ -14,6 +14,7 @@ from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from backend.integrations.errors import IntegrationError
+from backend.integrations.search_quality import CLOSED_TEST_ONLY
 from backend.integrations.transcription import TranscriptionProvider
 
 from .errors import APIError
@@ -37,6 +38,7 @@ from .models import (
 from .services import (
     AgentCatalogProvider,
     DemoCustomerIdentityResolver,
+    DemoIdentityResolver,
     EmptyAgentCatalog,
     IdentityResolver,
     MessageDispatch,
@@ -85,6 +87,21 @@ def create_app(
     app.state.transcription_provider = transcription_provider
     app.state.memory = memory
     app.state.session_mode = Mode(session_mode)
+
+    @app.middleware("http")
+    async def persist_local_demo_admin(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        token = getattr(request.state, "issue_local_demo_admin_cookie", None)
+        if token is not None and request.url.path == "/api/v1/admin/overview":
+            response.set_cookie(
+                key=DemoIdentityResolver.cookie_name,
+                value=token,
+                httponly=True,
+                secure=False,
+                samesite="strict",
+                path="/api/v1",
+            )
+        return response
 
     @app.exception_handler(APIError)
     async def api_error_handler(_: Request, exc: APIError) -> JSONResponse:
@@ -320,6 +337,21 @@ def create_app(
         background_tasks: BackgroundTasks,
     ) -> OrderAcceptedResponse:
         identity = await _identity(request)
+        snapshot = await _state(request).snapshot(payload.session_id, identity)
+        recommendation = next(
+            (
+                item
+                for item in snapshot.recommendations
+                if item.recommendation_id == payload.recommendation_id
+            ),
+            None,
+        )
+        if recommendation is not None and CLOSED_TEST_ONLY in recommendation.warnings:
+            raise APIError(
+                409,
+                "CLOSED_RESTAURANT_TEST_ONLY",
+                "A opção de restaurante fechado é somente para teste e não pode virar pedido.",
+            )
         await _state(request).session_client_id(payload.session_id, identity)
         dispatcher: OrderDispatcher | None = request.app.state.order_dispatcher
         if dispatcher is None:

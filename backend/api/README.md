@@ -4,9 +4,14 @@ Esta composição já inclui `backend.agents` integrado de `feat/agents@9c7180a`
 API, runtime e os seis agentes estão no mesmo checkout; não é mais necessário
 exportar os agentes para uma pasta temporária ou configurar um `PYTHONPATH` extra.
 O módulo `backend/memory` (SQLite e RAG) entrou na `main` pelo PR #3. O RAG já é
-composto pelos agentes; a API ainda usa memória operacional temporária por padrão.
-É possível injetar `SQLiteMemory` em `build_application(memory=...)`, mas isso não
-persiste o cadastro de sessões HTTP, projeções, histórico SSE ou idempotência da API.
+composto pelos agentes e a API agora usa `SQLiteMemory` por padrão, no arquivo
+ignorado `backend/api/.local/session-memory.sqlite3`. Defina `APP_MEMORY_PATH` para
+outro arquivo ou `APP_MEMORY_BACKEND=ephemeral` para voltar à memória temporária.
+Também é possível injetar a implementação em `build_application(memory=...)`.
+
+O SQLite persiste o estado compartilhado dos agentes, mas ainda não persiste o
+cadastro/autorização das sessões HTTP, projeções, histórico SSE ou idempotência da
+API. Portanto, reiniciar o processo ainda não restaura sozinho um atendimento HTTP.
 
 Na raiz do projeto, com as dependências instaladas:
 
@@ -24,19 +29,51 @@ uv run --python 3.12 pytest backend/api/tests backend/integrations/tests backend
 ```
 
 O teste real continua desabilitado, salvo `RUN_LIVE_IFOOD=1` explícito. Os testes
-offline cobrem conversa, seis agentes, preferência por pizza, orçamento/restrições,
+offline cobrem conversa, oito agentes, preferência por pizza, orçamento/restrições,
 contexto compartilhado e isolamento de eventos HTTP/SSE entre comprador e gestor.
 
 ## Qualidade e limites da busca
 
-O runtime real protege a especificidade do pedido com uma guarda lexical: a query
-e os nomes dos itens devem manter os termos de `Produto desejado:` que o pesquisador
-envia. Não há outra extração de prato por stopwords na integração. Sem essa linha,
-não há termos obrigatórios; a classificação e a limpeza pertencem aos agentes.
-Não há lista fechada de pratos. Retorno de strogonoff não é promovido a parmegiana
-de frango; se nada corresponder, a lista fica vazia, sem pesquisa extra automática.
-Isso é conservador: sinônimos não normalizados, descrições incompletas e consultas
-complexas precisam de alinhamento da intenção estruturada com o pesquisador.
+O `opencode.json` registra dois agentes enxutos: `ifood-search` e `ifood-reasoning`.
+O backend os seleciona explicitamente para evitar o prompt de programação do agente
+`build`. As variáveis `OPENCODE_SEARCH_AGENT`/`OPENCODE_REASONING_AGENT` permitem
+selecionar outros agentes já configurados. Reinicie a API e recarregue/reinicie o
+OpenCode depois de atualizar o código/configuração.
+
+No OpenCode 1.19.3, `format: json_schema` usa a ferramenta interna `StructuredOutput`.
+Ela fica habilitada no raciocínio, com MCP e outras ferramentas negados. O cliente
+lê `info.structured` (mantendo compatibilidade com `structured_output`) e, como
+reserva, a entrada de `StructuredOutput` concluída com `metadata.valid=true`.
+Não consulta o histórico de mensagens dessas sessões: esse endpoint tem um erro
+de serialização com `format` nessa versão. Busca continua usando somente evidência MCP.
+
+Regressão ao vivo, opt-in, com itens sintéticos (PowerShell; uma chamada de IA, sem busca iFood):
+
+```text
+$env:RUN_LIVE_OPENCODE = "1"
+python -m pytest backend/integrations/tests/test_live_curator.py::test_real_curator_distinguishes_dish_from_flavor_and_reports_usage -q -s
+```
+
+Em 18/10, OpenCode 1.19.3/Gemini: pizza grande aceita; pastel de pizza, esfiha sabor
+pizza e "Pizza" de esfiharia rejeitados. Consumo medido: 1.708 tokens de entrada +
+157 de saída = 1.865, contra ~8.400 por raciocínio no teste anterior do Claude.
+As entradas diferem, portanto isso não é uma economia percentual garantida por pedido.
+O teste HTTP offline também passa pelo cliente OpenCode real com transporte simulado,
+reproduzindo o formato da resposta e o erro potencial de GET do histórico.
+
+Quando o OpenCode entra em retry por cota, o cliente detecta isso no status local e
+aborta a chamada, retornando `quota`. O runtime suspende novas chamadas por 30 s,
+evitando repetições pelos especialistas seguintes. Isso não renova a cota do provedor.
+Teste real com cota esgotada: 2,52 s na primeira chamada, 0,016 s na seguinte.
+A nova validação completa com catálogo ficou bloqueada por essa cota; não confundir
+o teste real do Curador com um novo aceite completo de busca e recomendação.
+
+O runtime real protege a especificidade do pedido com uma guarda lexical na query:
+ela deve manter os termos de `Produto desejado:` que o pesquisador envia. Os itens
+retornados não são descartados antecipadamente só pelo nome. O Curador julga a
+relevância sem ferramentas — por exemplo, pizza não deve virar pastel de pizza — e,
+se a IA estiver indisponível, o filtro lexical dos agentes continua como reserva.
+Não há lista fechada de pratos nem pesquisa extra automática.
 
 As ofertas compatíveis são deduplicadas por produto/loja e distribuídas entre os
 restaurantes retornados. Não são inventadas outras lojas nem ampliadas permissões
@@ -50,8 +87,19 @@ itens com `merchant.isOpen=false`; booleano verdadeiro é repassado como `is_ope
 Se todas as lojas estiverem fechadas, devolve lista vazia. Ausência do status não
 vira um booleano verdadeiro inventado. Abertura é referida ao momento da consulta.
 
-Avisos de entrega ainda não garantida, distância, ingredientes, alterações e preço
-dos complementos não confirmados são preservados em `Recommendation.warnings`.
+Para demonstrações locais fora do horário comercial existe uma exceção opt-in:
+`--include-closed-restaurants`. Ela envia `onlyOpen=false` e permite que o planejador
+monte uma proposta com a oferta fechada, mas a recomendação e o chat informam
+explicitamente que a loja está fechada, que a opção serve somente para teste e que
+não está disponível para pedido. A API também bloqueia uma eventual tentativa de
+submeter essa recomendação. O modo normal continua excluindo lojas fechadas.
+
+Cada recomendação expõe a faixa de entrega (`eta_min_minutes`/`eta_minutes`) e,
+quando presentes no retorno verificado, distância, avaliação, abertura da loja,
+imagem do item e preço original da promoção. Campos ausentes ficam `null`: a IA não
+inventa esses dados. Avisos de entrega ainda não garantida, distância, ingredientes,
+alterações e preço dos complementos não confirmados são preservados em
+`Recommendation.warnings`.
 O chat acrescenta só uma frase curta de confirmação, sem repetir todos os avisos.
 Uma busca com coordenadas públicas não confirma entrega no endereço do usuário.
 Não foram criados campos HTTP de modificadores nem novas ferramentas MCP.
@@ -194,13 +242,29 @@ Na demo, o comprador é `client_demo_1`. O gestor usa `X-Demo-Role: admin` nas
 requisições de catálogo, overview, histórico, snapshot e SSE. Isso é um seletor
 de papel para demonstração local, não autenticação de produção.
 
-O frontend precisa enviar o cabeçalho também ao consumir SSE (por exemplo, com
-streaming via fetch; EventSource nativo não permite definir cabeçalhos próprios).
-Não enviar esse cabeçalho nas chamadas do comprador.
+Para `EventSource` nativo, que não aceita cabeçalho customizado, o painel deve fazer
+primeiro um `fetch` same-origin para `/api/v1/admin/overview` com
+`X-Demo-Role: admin`. A resposta instala um cookie de sessão opaco, `HttpOnly` e
+`SameSite=Strict`; depois disso o `EventSource` same-origin recebe a visão do gestor
+sem papel ou credencial na URL. Não enviar o cabeçalho nas chamadas do comprador.
 
-No modo real, o cabeçalho é ignorado. A identidade padrão continua sendo a
-identidade local de comprador; autenticação real e perfil de gestor exigem
-`build_application(identity_resolver=...)`. Não publicar como serviço de produção.
+No modo real, o cabeçalho continua ignorado por padrão. Para uma apresentação local,
+inicie explicitamente com:
+
+```text
+python -m backend.api.run_local --real --local-demo-admin
+```
+
+Se os restaurantes estiverem fechados durante a apresentação, use:
+
+```text
+python -m backend.api.run_local --real --local-demo-admin --include-closed-restaurants
+```
+
+Essa opção só concede o gestor fictício quando tanto o cliente quanto o host da URL
+são loopback (`localhost`, `127.0.0.1` ou `::1`). O launcher permanece vinculado a
+`127.0.0.1`; a opção não é autenticação real e não deve ser usada em produção. Para
+produção, injete um `IdentityResolver` autenticado em `build_application(...)`.
 
 ## Contexto inicial
 
@@ -217,14 +281,14 @@ ou null; preferências/restrições são listas de strings não vazias.
 O contexto é salvo com revisão esperada 0 e autor `api` antes de publicar a sessão.
 API e agentes compartilham `app.state.memory` / `app.state.agent_services.memory`.
 Cada mensagem carrega novamente o contexto da memória e encaminha o modo da sessão.
-Para memória persistente, injete `build_application(memory=...)`; o padrão é
-`EphemeralSessionMemory`, em `backend/api/session_memory.py`, com isolamento de
-sessões, cópias defensivas e controle de revisão. Não possui banco/RAG, perde os
-dados ao reiniciar e não depende de `backend.agents.testing.fakes`.
+O padrão é `SQLiteMemory`, compartilhado por API e agentes. Para testes que precisem
+de isolamento em memória, use `build_application(memory_backend="ephemeral")` ou
+injete `EphemeralSessionMemory`; essa implementação mantém cópias defensivas e
+controle de revisão, mas perde os dados ao reiniciar.
 
 ## Aceite e pendências
 
-`tests/test_acceptance.py` verifica catálogo de seis agentes, pedido de quatro
+`tests/test_acceptance.py` verifica catálogo de oito agentes, pedido de quatro
 pessoas por R$ 115,60, validação e propagação do contexto, modos, isolamento do
 comprador/gestor e SSE sobre HTTP local.
 

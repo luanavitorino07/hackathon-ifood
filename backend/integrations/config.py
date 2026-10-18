@@ -69,6 +69,8 @@ class OpenCodeSettings:
     provider_id: str = "google"
     model_id: str = "gemini-3.8-flash"
     model_variant: str | None = "low"
+    search_agent: str = "ifood-search"
+    reasoning_agent: str = "ifood-reasoning"
     search_tool_id: str = "ifood_searchOffers"
     request_timeout_seconds: float = 45.0
     mcp_server_name: str = "ifood"
@@ -78,6 +80,8 @@ class OpenCodeSettings:
             raise ValueError("OPENCODE_BASE_URL precisa usar http ou https")
         if not self.provider_id or not self.model_id:
             raise ValueError("provider_id e model_id não podem ser vazios")
+        if not self.search_agent.strip() or not self.reasoning_agent.strip():
+            raise ValueError("agentes de busca e raciocínio não podem ser vazios")
         if self.request_timeout_seconds <= 0:
             raise ValueError("request_timeout_seconds precisa ser maior que zero")
 
@@ -90,6 +94,8 @@ class OpenCodeSettings:
             provider_id=os.getenv("OPENCODE_PROVIDER_ID", "google"),
             model_id=os.getenv("OPENCODE_MODEL_ID", "gemini-3.8-flash"),
             model_variant=os.getenv("OPENCODE_MODEL_VARIANT", "low") or None,
+            search_agent=os.getenv("OPENCODE_SEARCH_AGENT", "ifood-search"),
+            reasoning_agent=os.getenv("OPENCODE_REASONING_AGENT", "ifood-reasoning"),
             search_tool_id=os.getenv("OPENCODE_IFOOD_SEARCH_TOOL_ID", "ifood_searchOffers"),
             request_timeout_seconds=_positive_float(
                 os.getenv("OPENCODE_REQUEST_TIMEOUT_SECONDS"), 45.0
