@@ -103,7 +103,7 @@ def test_opencode_client_health_and_structured_prompt() -> None:
     body = json.loads(prompt_request.content)
     assert body["model"] == {
         "providerID": "google",
-        "modelID": "gemini-2.5-flash",
+        "modelID": "gemini-3.8-flash",
     }
     assert body["tools"] == {"ifood_searchOffers": True}
     assert body["format"]["type"] == "json_schema"

@@ -62,6 +62,8 @@ class _OpenCodePort(Protocol):
 
     async def aclose(self) -> None: ...
 
+    async def abort_session(self, session_id: str) -> bool: ...
+
 
 @dataclass(frozen=True, slots=True)
 class _TraceData:
@@ -86,7 +88,7 @@ class _ExecutionResult:
 @dataclass(frozen=True, slots=True)
 class _ResolvedLocation:
     coordinates: dict[str, float]
-    source: Literal["context", "sandbox"]
+    source: Literal["context", "sandbox", "public_test"]
 
 
 class OpenCodeAgentRuntime:
@@ -146,13 +148,12 @@ class OpenCodeAgentRuntime:
         dietary = _read_dietary_filters(call.context)
         client = self._client_factory()
         started_at = monotonic()
+        session_id = None
         try:
             tool_ids = await client.list_tool_ids()
             tool_id = _resolve_search_tool(tool_ids, self._settings.mcp_server_name)
-            enabled_tools = {item: item == tool_id for item in tool_ids}
-            session_id = await client.create_session(
-                title=f"{call.agent_id}:{call.task_id}"[:120]
-            )
+            enabled_tools = {"*": False, **{item: item == tool_id for item in tool_ids}}
+            session_id = await client.create_session(title=f"{call.agent_id}:{call.task_id}"[:120])
             response = await client.run_prompt(
                 session_id,
                 system=call.system,
@@ -190,10 +191,17 @@ class OpenCodeAgentRuntime:
                 detail=(
                     "sandbox_location_used"
                     if resolved_location.source == "sandbox"
+                    else "test_location_used"
+                    if resolved_location.source == "public_test"
                     else None
                 ),
             )
         except IntegrationError as exc:
+            if session_id is not None and isinstance(exc, RuntimeTimeoutError):
+                try:
+                    await client.abort_session(session_id)
+                except Exception:
+                    pass
             retry_after = 30 if isinstance(exc, QuotaError) else None
             return _failure(exc.code, _safe_detail(exc), retry_after_s=retry_after)
         except (TypeError, ValueError, KeyError, json.JSONDecodeError):
@@ -256,7 +264,7 @@ def _resolve_location(
     if fallback is not None:
         return _ResolvedLocation(
             {"latitude": fallback.latitude, "longitude": fallback.longitude},
-            "sandbox",
+            fallback.source,
         )
     return None
 
@@ -265,6 +273,8 @@ def _trace_summary(offer_count: int, location_source: str) -> str:
     summary = f"Busca MCP concluída com {offer_count} oferta(s)."
     if location_source == "sandbox":
         return f"{summary} Localização de sandbox utilizada."
+    if location_source == "public_test":
+        return f"{summary} Localização pública de teste utilizada; não é a localização do cliente."
     return summary
 
 
@@ -306,16 +316,18 @@ def _build_search_prompt(
     dietary: Sequence[str],
 ) -> str:
     dietary_instruction = (
-        f"Use refinements.dietary={json.dumps(list(dietary))}. "
+        f"Use refinements.itemRestrictions={json.dumps(list(dietary))}. "
         if dietary
-        else "Não envie refinements.dietary. "
+        else "Não envie refinements.itemRestrictions. "
     )
     return (
         "Execute exatamente uma chamada à tool searchOffers do MCP do iFood. "
         "Busque itens (resultKind ITEM), nunca merchants. Use exatamente "
         f"userLocation={json.dumps(dict(location), ensure_ascii=False)}. "
         f"{dietary_instruction}"
-        "Não use localização inferida e não chame outras tools. Pedido:\n"
+        "Não use localização inferida e não chame outras tools. "
+        "Use pageSize=5 e merchantType=RESTAURANT. "
+        "Depois da ferramenta, responda somente OK. Pedido:\n"
         f"{agent_prompt}"
     )
 
@@ -327,17 +339,13 @@ def _completed_tool_part(
     if not isinstance(parts, list):
         raise InvalidOutputError("invalid_mcp_response")
     tool_parts = [
-        part
-        for part in parts
-        if isinstance(part, Mapping) and part.get("type") == "tool"
+        part for part in parts if isinstance(part, Mapping) and part.get("type") == "tool"
     ]
-    if len(tool_parts) > max_tool_calls:
+    if len(tool_parts) > max_tool_calls or any(
+        (part.get("tool") or part.get("name")) != tool_id for part in tool_parts
+    ):
         raise InvalidOutputError("invalid_mcp_response")
-    matching = [
-        part
-        for part in tool_parts
-        if (part.get("tool") or part.get("name")) == tool_id
-    ]
+    matching = [part for part in tool_parts if (part.get("tool") or part.get("name")) == tool_id]
     if not matching:
         raise UnavailableError("tool_not_called", retryable=False)
     part = matching[-1]
@@ -382,10 +390,8 @@ def _validate_tool_input(
         refinements = tool_input.get("refinements")
         if not isinstance(refinements, Mapping):
             raise InvalidOutputError("invalid_mcp_response")
-        actual_dietary = refinements.get("dietary")
-        if not isinstance(actual_dietary, list) or sorted(actual_dietary) != list(
-            dietary
-        ):
+        actual_dietary = refinements.get("itemRestrictions")
+        if not isinstance(actual_dietary, list) or sorted(actual_dietary) != list(dietary):
             raise InvalidOutputError("invalid_mcp_response")
 
 
@@ -395,6 +401,8 @@ def _tool_payload(part: Mapping[str, Any]) -> dict[str, Any]:
         raise InvalidOutputError("invalid_mcp_response")
     raw = state.get("result", state.get("structured", state.get("output")))
     value = _decode_json_value(raw)
+    if isinstance(value, Mapping) and value.get("isError") is True:
+        raise UnavailableError("mcp_error", retryable=False)
     if isinstance(value, Mapping) and isinstance(value.get("structuredContent"), Mapping):
         value = value["structuredContent"]
     if isinstance(value, Mapping) and isinstance(value.get("content"), list):
@@ -422,6 +430,8 @@ def _decode_json_value(value: Any) -> Any:
 def _raise_mcp_error(payload: Mapping[str, Any]) -> None:
     errors = payload.get("errors")
     if not isinstance(errors, Mapping):
+        if errors:
+            raise UnavailableError("mcp_error", retryable=False)
         return
     code = errors.get("code")
     mapping: dict[str, tuple[type[IntegrationError], str, bool]] = {

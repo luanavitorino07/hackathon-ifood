@@ -23,6 +23,63 @@ Documentação interativa: http://127.0.0.1:8000/docs (com o servidor iniciado).
   `ifood_mcp` continua exigindo prova de sucesso da ferramenta. Não há fallback
   silencioso de real para demo. Valores de modo inválidos interrompem a inicialização.
 
+O modelo padrão do runtime agora é `google/gemini-3.8-flash`, variante `low`.
+O Google recusou `gemini-2.5-flash` para o cadastro usado na validação real.
+Sobrescreva com `OPENCODE_MODEL_ID` e `OPENCODE_MODEL_VARIANT` se necessário.
+
+OpenCode `1.19.3` não inclui tools MCP em `/experimental/tool/ids`. O cliente usa
+`OPENCODE_IFOOD_SEARCH_TOOL_ID` (padrão `ifood_searchOffers`, confirmado no ambiente)
+quando `/mcp` confirma conexão. A execução ainda precisa comprovar uma chamada real
+concluída. Todas as outras ferramentas são negadas por wildcard e por permissões
+da sessão. O cliente reúne as mensagens intermediárias da mesma execução para
+recuperar o resultado MCP, sem confiar apenas no texto final do modelo.
+
+O filtro alimentar real é `refinements.itemRestrictions`, não `dietary`.
+Tags alimentares continuam desconhecidas quando ausentes no resultado do iFood.
+
+### Executar a integração real localmente (Prompt de Comando)
+
+Com os agentes disponíveis no checkout ou no `PYTHONPATH`, OpenCode autenticado
+no mesmo projeto e servidor OpenCode iniciado em `127.0.0.1:4096`:
+
+```bat
+set APP_RUNTIME_MODE=real
+set IFOOD_SANDBOX_LATITUDE=-23.5505
+set IFOOD_SANDBOX_LONGITUDE=-46.6333
+set IFOOD_FALLBACK_LOCATION_SOURCE=public_test
+uv run --python 3.12 uvicorn backend.api.main:app --host 127.0.0.1 --port 8000
+```
+
+Essas coordenadas são referência pública de teste em São Paulo, NÃO um sandbox
+confirmado nem a localização do comprador. `public_test` registra essa distinção
+no resumo de atividade. Para um sandbox oficial, configure suas coordenadas e
+`IFOOD_FALLBACK_LOCATION_SOURCE=sandbox`. Sem localização válida, a busca falha
+explicitamente com `LOCATION_REQUIRED`. Os comandos acima alteram só o processo
+do terminal, não as variáveis permanentes do Windows.
+
+Em outro terminal, o teste de fumaça real é opt-in:
+
+```bat
+set RUN_LIVE_IFOOD=1
+uv run --python 3.12 pytest backend/api/tests/test_live_ifood.py -q
+```
+
+Esse teste faz busca somente leitura e verifica HTTP, recomendações `ifood_mcp`,
+histórico e SSE do comprador. A execução normal dos testes não chama serviços reais.
+
+### Evidência da validação real
+
+Validação com agentes `784b57c` carregados de uma cópia temporária somente leitura,
+sem merge e sem alterar seu código. Fluxo exercitado: HTTP → orquestrador →
+pesquisador → OpenCode → Gemini 3.8 Flash → searchOffers → planejador/auditor →
+snapshot/histórico/SSE. Foram verificadas separadamente as visões comprador e
+gestor usando um resolvedor de identidade restrito ao teste local.
+
+A busca de pizza retornou cinco ofertas reais e três recomendações. Exemplo:
+Pizzaria Rancho da Pizza, pizza grande com bebida, R$ 38,98 e entrega informada
+em 40 minutos. O valor NÃO inclui taxa de serviço desconhecida; esse aviso foi
+preservado na recomendação e na fala do assistente. Nenhuma compra foi executada.
+
 No Prompt de Comando do Windows, selecione com `set APP_RUNTIME_MODE=demo`
 antes de executar o servidor; para o runtime real, use `set APP_RUNTIME_MODE=real`.
 
@@ -72,5 +129,9 @@ API retorna a frase de preferência solicitada.
 
 Correção proposta ao responsável pelos agentes: considerar as preferências na
 busca genérica do catálogo demo, preservando as restrições e mensagens explícitas.
-Nenhum arquivo de agentes foi alterado. A busca iFood real ainda requer teste com
-OAuth e resultado sanitizado; áudio e envio real de pedidos continuam pendentes.
+Nenhum arquivo de agentes foi alterado. A busca iFood real por pizza foi validada
+com OAuth, agentes, HTTP e SSE. Áudio e envio real de pedidos continuam pendentes.
+As duas tentativas ao vivo de pedido vegetariano excederam 60 segundos antes da
+chamada MCP (`LLM_TIMEOUT`); o filtro `itemRestrictions` está coberto pelos testes,
+mas sua execução real ainda precisa ser confirmada. Não foram inventadas ofertas
+para contornar essas falhas.

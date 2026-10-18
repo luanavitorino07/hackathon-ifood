@@ -75,6 +75,11 @@ class OpenCodeClient:
         body: dict[str, Any] = {}
         if title:
             body["title"] = title
+        # This client is deliberately read-only: MCP tools beyond search are denied.
+        body["permission"] = [
+            {"permission": "*", "pattern": "*", "action": "deny"},
+            {"permission": self.settings.search_tool_id, "pattern": "*", "action": "allow"},
+        ]
         data = await self._request_json("POST", "/session", json=body)
         session_id = data.get("id")
         if not isinstance(session_id, str) or not session_id:
@@ -101,6 +106,8 @@ class OpenCodeClient:
             },
             "parts": [{"type": "text", "text": prompt}],
         }
+        if self.settings.model_variant:
+            body["variant"] = self.settings.model_variant
         if agent:
             body["agent"] = agent
         if system:
@@ -119,15 +126,41 @@ class OpenCodeClient:
             if timeout_seconds <= 0:
                 raise ValueError("timeout_seconds precisa ser maior que zero")
             request_options["timeout"] = timeout_seconds
-        data = await self._request_json(
-            "POST", f"/session/{session_id}/message", **request_options
-        )
+        data = await self._request_json("POST", f"/session/{session_id}/message", **request_options)
         info = data.get("info")
         if not isinstance(info, Mapping):
             raise InvalidOutputError("resposta de mensagem inválida do OpenCode")
         error = info.get("error")
-        if isinstance(error, Mapping) and error.get("name") == "StructuredOutputError":
-            raise InvalidOutputError("Gemini não produziu a saída estruturada esperada")
+        if isinstance(error, Mapping):
+            self._raise_model_error(error)
+        # OpenCode may return only the final assistant message; tool calls live
+        # in intermediate messages sharing the same user-message parent.
+        parent_id = info.get("parentID")
+        if isinstance(parent_id, str) and tools is not None:
+            messages = await self._request_json("GET", f"/session/{session_id}/message")
+            if not isinstance(messages, list):
+                raise InvalidOutputError("histórico de execução inválido do OpenCode")
+            tool_parts = []
+            seen = set()
+            for message in messages:
+                message_info = message.get("info", {})
+                if (
+                    message_info.get("role") != "assistant"
+                    or message_info.get("parentID") != parent_id
+                ):
+                    continue
+                if isinstance(message_info.get("error"), Mapping):
+                    self._raise_model_error(message_info["error"])
+                for part in message.get("parts", []):
+                    key = part.get("id") or part.get("callID")
+                    if part.get("type") == "tool" and key not in seen:
+                        tool_parts.append(part)
+                        seen.add(key)
+            data = {
+                **data,
+                "parts": tool_parts
+                + [part for part in data.get("parts", []) if part.get("type") != "tool"],
+            }
         message_id = info.get("id")
         if message_id is not None and not isinstance(message_id, str):
             raise InvalidOutputError("identificador de mensagem inválido do OpenCode")
@@ -152,7 +185,32 @@ class OpenCodeClient:
         data = await self._request_json("GET", "/experimental/tool/ids")
         if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
             raise InvalidOutputError("lista de ferramentas inválida do OpenCode")
+        # In 1.19.x the experimental catalog lists built-ins only. The verified
+        # MCP tool ID is configurable; connection and actual tool output still
+        # have to be verified before declaring success.
+        if self.settings.search_tool_id not in data:
+            status = await self.mcp_status()
+            server = status.get(self.settings.mcp_server_name, {})
+            if server.get("status") == "connected":
+                data.append(self.settings.search_tool_id)
+            elif server.get("status") in {"needs_auth", "needs_client_registration"}:
+                raise UnavailableError("auth_required", retryable=False)
         return data
+
+    @staticmethod
+    def _raise_model_error(error: Mapping[str, Any]) -> None:
+        name = error.get("name")
+        detail = error.get("data", {})
+        status = detail.get("statusCode") if isinstance(detail, Mapping) else None
+        if status == 429:
+            raise QuotaError("cota do provedor de IA temporariamente excedida")
+        if status in {408, 504}:
+            raise RuntimeTimeoutError("tempo limite da chamada ao modelo excedido")
+        if name == "StructuredOutputError":
+            raise InvalidOutputError("Gemini não produziu a saída estruturada esperada")
+        if name == "MessageAbortedError":
+            raise RuntimeTimeoutError("execução do modelo interrompida")
+        raise UnavailableError("provedor de IA indisponível", retryable=status != 404)
 
     async def list_tools(self) -> Any:
         return await self._request_json(

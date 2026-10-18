@@ -9,6 +9,7 @@ import pytest
 
 from backend.integrations.agent_runtime import OpenCodeAgentRuntime
 from backend.integrations.config import OpenCodeSettings, SandboxLocation
+from backend.integrations.errors import RuntimeTimeoutError
 from backend.integrations.opencode_client import OpenCodeRunResult
 
 
@@ -48,7 +49,7 @@ class _FakeOpenCode:
                                     "latitude": -23.55,
                                     "longitude": -46.63,
                                 },
-                                "refinements": {"dietary": ["VEGETARIAN"]},
+                                "refinements": {"itemRestrictions": ["VEGETARIAN"]},
                             },
                             "output": json.dumps(self.payload),
                             "time": {"start": 1000, "end": 1042},
@@ -134,6 +135,7 @@ def test_runtime_maps_raw_mcp_output_and_ignores_model_structured_output() -> No
     assert result.detail == "sandbox_location_used"
     assert "Localização de sandbox utilizada" in result.traces[0].summary
     assert client.prompt_kwargs["tools"] == {
+        "*": False,
         "bash": False,
         "ifood_searchOffers": True,
     }
@@ -155,6 +157,30 @@ def test_runtime_requires_coordinates_when_sandbox_fallback_is_absent() -> None:
     assert result.detail == "location_required"
 
 
+def test_timed_out_execution_is_aborted_and_client_closed() -> None:
+    client = _FakeOpenCode({})
+    aborted = []
+
+    async def timeout(session_id, **kwargs):
+        raise RuntimeTimeoutError("timeout")
+
+    async def abort(session_id):
+        aborted.append(session_id)
+        return True
+
+    client.run_prompt = timeout
+    client.abort_session = abort
+    runtime = OpenCodeAgentRuntime(
+        OpenCodeSettings(),
+        sandbox_location=SandboxLocation(-23.55, -46.63),
+        client_factory=lambda: client,
+    )
+    result = asyncio.run(runtime._execute(_call()))
+    assert result.error == "timeout"
+    assert aborted == ["oc_session_1"]
+    assert client.closed
+
+
 def test_runtime_treats_mcp_error_body_as_failed_even_with_completed_tool() -> None:
     client = _FakeOpenCode(
         {
@@ -170,9 +196,7 @@ def test_runtime_treats_mcp_error_body_as_failed_even_with_completed_tool() -> N
         client_factory=lambda: client,
     )
 
-    result = asyncio.run(
-        runtime._execute(_call(dietary_filters=["VEGETARIAN"]))
-    )
+    result = asyncio.run(runtime._execute(_call(dietary_filters=["VEGETARIAN"])))
 
     assert result.ok is False
     assert result.error == "unavailable"
@@ -187,9 +211,7 @@ def test_runtime_accepts_coordinates_from_internal_context() -> None:
 
     async def run_prompt_with_location(session_id: str, **kwargs):
         result = await original_run_prompt(session_id, **kwargs)
-        result.raw_response["parts"][0]["state"]["input"][
-            "userLocation"
-        ] = client_location
+        result.raw_response["parts"][0]["state"]["input"]["userLocation"] = client_location
         return result
 
     client.run_prompt = run_prompt_with_location
