@@ -71,7 +71,8 @@ Monte a partir dos **resultados reais do MCP**, nunca do texto do modelo.
 Classificação por regras, sem LLM. Só mensagens de **pedido** (comida, orçamento, pessoas) rodam
 a esteira e chamam o runtime. Saudação, agradecimento, despedida, pedido vago, dúvida e texto
 não entendido recebem resposta direta, sempre perguntando o que o cliente quer, e deixam a
-sessão em `waiting_customer`. Com pedido em andamento (`conversation.stage = "ordering"` na
+sessão em `waiting_customer`. Pedido de "mais barato" só aceita opções com total menor que o da última recomendação mostrada
+(`shown`); se não houver, o bot diz que aquela já é a mais barata em vez de repetir. Com pedido em andamento (`conversation.stage = "ordering"` na
 memória), follow-ups também contam como pedido.
 
 ## Eventos emitidos
@@ -83,7 +84,8 @@ Eventos de agentes: `visibility="admin"`; resposta ao cliente e recomendações:
 
 ## Memória: chaves que o módulo escreve
 `constraints` (`budget_cents, party_size, dietary, preferences`), `conversation` (`stage`),
-`candidates`, `data_origin`, `proposals`, `audit` (`approved`, `issues`). O módulo de memória
+`shown` (`recommendation_id`, `total_cents` da última recomendação mostrada), `candidates`,
+`data_origin`, `proposals`, `audit` (`approved`, `issues`). O módulo de memória
 pode guardá-las como JSON opaco.
 
 ## Só para teste

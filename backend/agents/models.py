@@ -134,6 +134,7 @@ class WorkingState:
     approved_ids: list[str] = field(default_factory=list)
     issues: dict[str, list[str]] = field(default_factory=dict)
     missing_data: list[str] = field(default_factory=list)
+    price_ceiling_cents: int | None = None  # pedido "mais barato": só vale o que custar menos que isto
 
 
 @dataclass

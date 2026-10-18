@@ -221,6 +221,37 @@ class ConstraintsTest(unittest.TestCase):
         self.assertEqual(orch.handle_message(ctx).session_status, "active")
 
 
+class CheaperTest(unittest.TestCase):
+    def test_cheaper_returns_only_options_below_the_one_shown(self):
+        orch, ctx, _, memory = make("Quero comida para 2 pessoas até R$ 200")
+        memory.save_patch("sess_1", {"conversation": {"stage": "ordering"},
+                                     "shown": {"recommendation_id": "rec_x", "total_cents": 10000}}, 0, "t")
+        out = second_message(orch, ctx, "tem algo mais barato?")
+        self.assertTrue(out.recommendations)
+        for rec in out.recommendations:
+            self.assertLess(rec["total_cents"], 10000)
+
+    def test_cheaper_when_already_cheapest_says_so_instead_of_repeating(self):
+        orch, ctx, sink, _ = make("Quero comida para 2 pessoas até R$ 200")
+        first = orch.handle_message(ctx)
+        shown = first.recommendations[0]["total_cents"]
+        out = second_message(orch, ctx, "tem algo mais barato?")
+        self.assertEqual((out.recommendations, out.session_status), ([], "waiting_customer"))
+        self.assertIn("mais barata", out.reply_text)
+        self.assertIn(f"{shown // 100},{shown % 100:02d}", out.reply_text)
+
+    def test_cheaper_without_previous_recommendation_does_not_crash(self):
+        orch, ctx, _, memory = make("Quero comida para 2 pessoas até R$ 200")
+        memory.save_patch("sess_1", {"conversation": {"stage": "ordering"}}, 0, "t")
+        self.assertTrue(second_message(orch, ctx, "mais barato").recommendations)
+
+    def test_shown_total_is_saved_after_recommendation(self):
+        orch, ctx, _, memory = make("Quero comida para 2 pessoas até R$ 200")
+        out = orch.handle_message(ctx)
+        self.assertEqual(memory.load("sess_1").state["shown"]["total_cents"],
+                         out.recommendations[0]["total_cents"])
+
+
 class ChatTest(unittest.TestCase):
     def chat(self, text, runtime=None, **kw):
         runtime = runtime or FakeRuntime()

@@ -39,6 +39,8 @@ def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
     shown = rec["total_cents"] if rec["total_cents"] is not None else rec["subtotal_cents"]
     if c.budget_cents is not None and shown > c.budget_cents:
         issues.append("Acima do orçamento informado")
+    if st.price_ceiling_cents is not None and shown >= st.price_ceiling_cents:
+        issues.append("Não é mais barata que a opção anterior")
     unverified = soft_unverified(c, st.offers)
     veg = [by_id[i["product_id"]].tags for i in items if i["product_id"] in by_id]
     if "vegetarian" not in unverified:

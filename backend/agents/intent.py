@@ -75,3 +75,10 @@ def extract_constraints(text: str, known: Constraints) -> Constraints:
         dietary -= set(_VEGETARIAN_WORDS)  # a última declaração do cliente define o tipo
         dietary.add(VEGETARIAN_OPTION if re.search(r"(uma|1|alguma)\s+opcao", t) else VEGETARIAN_ALL)
     return Constraints(budget, party, tuple(sorted(dietary)), known.preferences)
+
+
+_CHEAPER = re.compile(r"\b(mais barat|mais em conta|mais economic|menos caro|mais simples|baratinh|mais acessivel)")
+
+
+def wants_cheaper(text: str) -> bool:
+    return bool(_CHEAPER.search(_plain(text)))

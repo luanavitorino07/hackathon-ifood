@@ -95,6 +95,10 @@ class Planner:
                     "confira a descrição do item" for r in unverified]
                 rec = build_recommendation(pool[0], picked, st.data_origin, reasons, warnings)
                 known = rec["total_cents"] if rec["total_cents"] is not None else rec["subtotal_cents"]
+                if st.price_ceiling_cents is not None:
+                    if known >= st.price_ceiling_cents:
+                        continue
+                    reasons.append("Mais barata que a opção anterior")
                 if rec["total_cents"] is None:
                     warnings.append("Total indisponível: taxa de entrega ou outras taxas desconhecidas")
                 if c.budget_cents is None:

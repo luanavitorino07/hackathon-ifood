@@ -5,7 +5,7 @@ from typing import Any
 
 from .chat import classify, reply_for
 from .events import ORCHESTRATOR_ID, EventEmitter, new_id
-from .intent import constraints_from_initial_context, extract_constraints, overlay
+from .intent import constraints_from_initial_context, extract_constraints, overlay, wants_cheaper
 from .models import AgentResult, AgentsOutput, Constraints, SessionContext, WorkingState, tag_requirements
 from .ports import AgentRuntimePort, EventSink, MemoryPort, RevisionConflict
 from .registry import Agent, AgentContext, AgentRegistry
@@ -29,8 +29,10 @@ class Orchestrator:
     # ------------------------------------------------------------------
     def handle_message(self, session: SessionContext) -> AgentsOutput:
         events = EventEmitter(self._sink, session.session_id)
-        constraints, in_order = self._build_constraints(session)
+        constraints, in_order, shown_total = self._build_constraints(session)
         state = WorkingState(constraints=constraints)
+        if wants_cheaper(session.message_text) and shown_total is not None:
+            state.price_ceiling_cents = shown_total
         intent = classify(session.message_text, in_order)
         if intent != "order":  # papo: responde direto, sem agentes e sem gastar cota
             return self._chat_only(session, events, constraints, intent)
@@ -56,9 +58,9 @@ class Orchestrator:
             if result.status == "needs_info":
                 break
         state.missing_data = missing
-        return self._finish(state, events, limitations)
+        return self._finish(session.session_id, state, events, limitations)
 
-    def _build_constraints(self, session: SessionContext) -> tuple[Constraints, bool]:
+    def _build_constraints(self, session: SessionContext) -> tuple[Constraints, bool, int | None]:
         """memória < session.constraints < initial_context < mensagem atual (explícita).
 
         Devolve também se já há um pedido em andamento (`conversation.stage == "ordering"`).
@@ -69,7 +71,11 @@ class Orchestrator:
         merged = constraints_from_initial_context(session.initial_context, merged)
         conversation = state.get("conversation")
         in_order = isinstance(conversation, dict) and conversation.get("stage") == "ordering"
-        return extract_constraints(session.message_text, merged), in_order
+        shown = state.get("shown")
+        shown_total = shown.get("total_cents") if isinstance(shown, dict) else None
+        if not isinstance(shown_total, int) or isinstance(shown_total, bool):
+            shown_total = None
+        return extract_constraints(session.message_text, merged), in_order, shown_total
 
     def _chat_only(self, session: SessionContext, events: EventEmitter, constraints: Constraints,
                    intent: str) -> AgentsOutput:
@@ -88,7 +94,8 @@ class Orchestrator:
         events.assistant_message(text)
         return AgentsOutput("error" if not retryable else "active", text, [])
 
-    def _finish(self, state: WorkingState, events: EventEmitter, limitations: list[str]) -> AgentsOutput:
+    def _finish(self, session_id: str, state: WorkingState, events: EventEmitter,
+                limitations: list[str]) -> AgentsOutput:
         approved = [r for r in state.recommendations if r["recommendation_id"] in state.approved_ids]
         for rid, problems in state.issues.items():
             if problems:
@@ -101,6 +108,10 @@ class Orchestrator:
             unverifiable = tag_requirements(state.constraints, state.offers)
             if not state.offers:
                 reason, ask = "Não encontrei ofertas disponíveis.", "Pode ajustar o pedido?"
+            elif state.price_ceiling_cents is not None:
+                reason = ("Essa já é a opção mais barata que encontrei com o que você pediu "
+                          f"({_brl(state.price_ceiling_cents)}).")
+                ask = "Quer ajustar algo, como o orçamento ou as restrições?"
             elif unverifiable:
                 names = ", ".join(unverifiable)
                 reason = f"Não consegui confirmar nas ofertas a restrição: {names}."
@@ -114,6 +125,9 @@ class Orchestrator:
             events.assistant_message(text)
             return AgentsOutput("waiting_customer", text, [])
         best = approved[0]
+        shown = best["total_cents"] if best["total_cents"] is not None else best["subtotal_cents"]
+        self._persist(session_id, ORCHESTRATOR_ID,
+                      {"shown": {"recommendation_id": best["recommendation_id"], "total_cents": shown}})
         events.recommendations_ready(approved)
         events.decision(best["recommendation_id"],
                         f"Recomendação principal: {best['merchant_name']}",
