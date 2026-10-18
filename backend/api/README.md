@@ -1,8 +1,7 @@
 # API — execução local e integração com agentes
 
-Esta composição já inclui `backend.agents` integrado de `feat/agents@9c7180a`.
-API, runtime e os seis agentes estão no mesmo checkout; não é mais necessário
-exportar os agentes para uma pasta temporária ou configurar um `PYTHONPATH` extra.
+Esta composição inclui `backend.agents` (10 agentes) no mesmo checkout. Visão geral do
+sistema: `README.md` na raiz e `docs/ARQUITETURA_COMPLETA.md`.
 O módulo `backend/memory` (SQLite e RAG) entrou na `main` pelo PR #3. O RAG já é
 composto pelos agentes e a API agora usa `SQLiteMemory` por padrão, no arquivo
 ignorado `backend/api/.local/session-memory.sqlite3`. Defina `APP_MEMORY_PATH` para
@@ -20,6 +19,44 @@ uv run --python 3.12 uvicorn backend.api.main:app --host 127.0.0.1 --port 8000
 ```
 
 Documentação interativa: http://127.0.0.1:8000/docs (com o servidor iniciado).
+
+### Testar o chat pelo terminal
+
+O cliente abaixo inicia a API dentro do próprio processo e mantém a mesma sessão entre
+as mensagens. Não é necessário abrir o navegador nem iniciar o Uvicorn separadamente.
+Por padrão usa o catálogo de demonstração, sem rede e sem consumir cota de IA:
+
+```text
+python -m backend.api.chat_cli
+```
+
+Digite mensagens no prompt `Você:` e use `/recomendacoes`, `/estado`, `/ajuda` ou
+`/sair`. Para um teste automatizável de uma única mensagem:
+
+```text
+python -m backend.api.chat_cli --once "quero pizza para 2 pessoas até R$ 150"
+```
+
+O terminal informa no início toda a pilha configurada. Depois de cada resposta,
+mostra as atividades de ferramenta realmente registradas no atendimento. No modo
+demo, `offer_search` e `raciocinio_ia` aparecem explicitamente como simulação local
+sem rede; OpenCode, Gemini e MCP iFood aparecem como não utilizados.
+
+Com o OpenCode Server já iniciado e autenticado em `127.0.0.1:4096`, o fluxo real
+usa Gemini e iFood MCP. Ele consome cota e usa a referência pública de São Carlos/SP:
+
+```text
+python -m backend.api.chat_cli --real
+```
+
+No modo real, o terminal identifica a URL do OpenCode, provedor/modelo configurado
+e o identificador da ferramenta `searchOffers` do MCP. A visão administrativa local
+é habilitada somente dentro desse processo para que o CLI consiga ler os eventos
+internos de ferramenta; isso não substitui autenticação de produção.
+
+O modo real também aceita `--include-closed-restaurants` para testes locais fora do
+horário comercial. Opções retornadas por lojas fechadas continuam sinalizadas como
+indisponíveis e não podem ser submetidas como pedido.
 
 Por padrão, a API inicia em demo, sem consumir cota de Gemini/Claude. Para validar
 os módulos juntos offline:
@@ -118,7 +155,7 @@ fluxo completo via API/Gemini; a suíte automatizada usa OpenCode/MCP simulados.
 O catálogo e o classificador do modo demo pertencem a `backend/agents`; as correções
 de relevância e retomada do Claude (PRs #6/#7) foram integradas nesta branch.
 Correspondência lexical continua limitada para sinônimos e descrições incompletas;
-o alinhamento com os agentes está registrado em `ATUALIZACAO.md`.
+o alinhamento com os agentes está registrado em `docs/historico/ATUALIZACAO.md`.
 
 ## Runtime
 
