@@ -334,6 +334,24 @@ class OrchestratorAgentCatalog:
         return [AgentDefinition.model_validate(item) for item in raw]
 
 
+class SimulatedOrderDispatcher:
+    """Botão "Comprar": compra SIMULADA. Os agentes registram o pedido no atendimento e avisam o cliente;
+    nada é enviado ao iFood e nenhum pagamento é feito (o MCP liberado só busca)."""
+
+    simulated = True
+
+    def __init__(self, orchestrator: Any, event_sink: StateEventSink, dispatcher: OrchestratorDispatcher) -> None:
+        self._orchestrator, self._event_sink, self._dispatcher = orchestrator, event_sink, dispatcher
+
+    async def dispatch(self, request: SubmitOrderRequest, identity: RequestIdentity) -> None:
+        lock = await self._dispatcher._session_lock(request.session_id)  # mesma trava das mensagens
+        async with lock:
+            with self._event_sink.bind(identity):
+                await asyncio.to_thread(self._orchestrator.simulate_purchase, request.session_id,
+                                        request.recommendation_id, request.client_action_id)
+            await self._event_sink.set_session_status(request.session_id, identity, "waiting_customer")
+
+
 class OrchestratorUsageReport:
     """Custo de IA por cliente, calculado pelos agentes a partir do consumo informado pelo provedor."""
 
@@ -350,6 +368,7 @@ class AgentServiceBundle:
     dispatcher: OrchestratorDispatcher
     catalog: OrchestratorAgentCatalog
     usage: OrchestratorUsageReport
+    orders: SimulatedOrderDispatcher
     event_sink: StateEventSink
     orchestrator: Any
     memory: Any
@@ -361,12 +380,10 @@ def build_agent_services(*, runtime: Any, memory: Any, state: Any) -> AgentServi
     bootstrap = import_module("backend.agents.bootstrap")
     event_sink = StateEventSink(state)
     orchestrator = bootstrap.build_orchestrator(runtime, memory, event_sink)
+    dispatcher = OrchestratorDispatcher(orchestrator, build_session_context, event_sink)
     return AgentServiceBundle(
-        dispatcher=OrchestratorDispatcher(
-            orchestrator,
-            build_session_context,
-            event_sink,
-        ),
+        dispatcher=dispatcher,
+        orders=SimulatedOrderDispatcher(orchestrator, event_sink, dispatcher),
         catalog=OrchestratorAgentCatalog(orchestrator),
         usage=OrchestratorUsageReport(orchestrator),
         event_sink=event_sink,

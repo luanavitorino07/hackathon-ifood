@@ -269,6 +269,58 @@ class Orchestrator:
         return self._ask(events, f"Pronto, cancelei a compra agendada de {self._schedule_line(target)}. "
                                  "Quer agendar outra ou pedir alguma coisa agora?")
 
+    def _record_sale(self, session_id: str, recommendation_id: Any, total_cents: Any) -> bool:
+        """Venda aceita (no chat ou pelo botão de compra) conta uma vez por recomendação."""
+        sold = self._memory.load(session_id).state.get("sold")
+        sold = [x for x in sold if isinstance(x, str)] if isinstance(sold, list) else []
+        if isinstance(recommendation_id, str) and recommendation_id in sold:
+            return False
+        self._usage.add_sale(session_id, total_cents if isinstance(total_cents, int) else None)
+        if isinstance(recommendation_id, str):
+            self._persist(session_id, ORCHESTRATOR_ID, {"sold": sold + [recommendation_id]})
+        return True
+
+    def simulate_purchase(self, session_id: str, recommendation_id: str, client_action_id: str) -> dict[str, Any]:
+        """Botão "Comprar": registra uma compra SIMULADA da recomendação e avisa o cliente no chat.
+
+        Nada é enviado ao iFood e nenhum pagamento é feito (o MCP liberado só busca). Idempotente por
+        `client_action_id`. Conta como venda no custo de IA por cliente e na monitoria de estratégias."""
+        events = EventEmitter(self._sink, session_id)
+        stored = self._memory.load(session_id).state
+        orders = [o for o in stored.get("orders") or [] if isinstance(o, dict)]
+        done = next((o for o in orders if o.get("client_action_id") == client_action_id), None)
+        if done is not None:
+            return done
+        proposals = [p for p in stored.get("proposals") or [] if isinstance(p, dict)]
+        rec = next((p for p in proposals if p.get("recommendation_id") == recommendation_id), None)
+        if rec is None:
+            events.order_status(None, "failed", "Recomendação não encontrada neste atendimento")
+            events.assistant_message("Não encontrei essa opção neste atendimento. Pode pedir de novo?")
+            return {"status": "failed"}
+        order_id = "sim_" + new_id("ord")[4:]
+        total = rec.get("total_cents") if isinstance(rec.get("total_cents"), int) else rec.get("subtotal_cents")
+        items = ", ".join(f"{i.get('quantity')}x {i.get('name')}" for i in rec.get("items") or [])
+        if self._record_sale(session_id, recommendation_id, total):
+            shown = stored.get("shown") if isinstance(stored.get("shown"), dict) else {}
+            owner = self._usage.owner(session_id)
+            if (owner and not owner[1].startswith("anon:") and self._customers is not None
+                    and hasattr(self._customers, "record_acceptance")
+                    and shown.get("recommendation_id") == recommendation_id):
+                self._customers.record_acceptance(owner[0], owner[1], session_id)
+        order = {"order_id": order_id, "client_action_id": client_action_id, "recommendation_id": recommendation_id,
+                 "merchant": rec.get("merchant_name"), "total_cents": total, "status": "confirmed", "simulated": True}
+        self._persist(session_id, ORCHESTRATOR_ID, {"orders": orders + [order],
+                                                    "conversation": {"stage": "confirmed"}})
+        events.agent_status(ORCHESTRATOR_ID, "done", None, "Compra simulada registrada")
+        events.order_status(order_id, "confirmed",
+                            f"Compra SIMULADA em {rec.get('merchant_name')} ({_brl(total)}): nada foi enviado ao iFood")
+        events.memory_changed("session", ["orders"], f"Compra simulada {order_id} registrada")
+        events.assistant_message(
+            f"Compra registrada! 🎉 Pedido {order_id} no {rec.get('merchant_name')}: {items}. Total {_brl(total)}. "
+            "Isto é uma simulação: nenhum pedido foi enviado ao iFood e nenhum pagamento foi feito. "
+            "Quer pedir mais alguma coisa?")
+        return order
+
     def usage_report(self, tenant_id: str) -> dict[str, Any]:
         """Custo de IA por cliente e vendas aceitas (Análise financeira do gestor)."""
         return self._usage.report(tenant_id)
@@ -480,7 +532,7 @@ class Orchestrator:
         if scheduled is not None and scheduled.status == "pending_confirmation":
             return self._confirm_schedule(session, events, constraints, scheduled)
         strategy = shown.get("strategy")
-        self._usage.add_sale(session.session_id, shown.get("total_cents"))  # venda aceita no chat
+        self._record_sale(session.session_id, shown.get("recommendation_id"), shown.get("total_cents"))
         key = self._client_key(session)
         if self._customers is not None and key and hasattr(self._customers, "record_acceptance"):
             strategy = self._customers.record_acceptance(session.tenant_id, key, session.session_id) or strategy

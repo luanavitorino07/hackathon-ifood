@@ -322,7 +322,7 @@ export function Offer({
       {onSelect && (
         <View style={{ padding: 16, paddingTop: 0 }}>
           <Button
-            title={closed ? "Restaurante fechado" : "Revisar pedido"}
+            title={closed ? "Restaurante fechado" : "Comprar"}
             onPress={onSelect}
             disabled={offer.total_cents === null || closed}
           />

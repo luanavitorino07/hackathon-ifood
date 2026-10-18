@@ -381,27 +381,22 @@ export function ChatScreen({ onBack }: { onBack: () => void }) {
         {lastAssistant < 0 && recommendations.length > 0 && offers}
         {waiting && <Typing />}
         {review && (
-          <Card title="Confirmar pedido">
+          <Card title="Confirmar compra">
             <Text style={s.text}>
               {review.merchant_name} · {money(review.total_cents)}
             </Text>
             <Text style={s.muted}>
-              {snapshot?.session.mode === "demo"
-                ? "Este pedido será apenas simulado."
-                : "A PedIA recomenda a melhor opção; o envio real do pedido ao iFood ainda não está disponível. Nenhum pagamento será feito."}
+              Compra simulada: o pedido fica registrado neste atendimento, mas nada é enviado ao iFood e nenhum
+              pagamento é feito.
             </Text>
-            <Button
-              title="Confirmar e submeter pedido"
-              onPress={() => void submit()}
-              disabled={busy || (!mocked && snapshot?.session.mode === "real")}
-            />
+            <Button title="Comprar (simulação)" onPress={() => void submit()} disabled={busy} />
             <Button title="Voltar" variant="ghost" onPress={() => setReview(null)} disabled={busy} />
           </Card>
         )}
-        {accepted && !order && <Text style={s.muted}>Solicitação aceita. Aguardando o resultado do pedido…</Text>}
+        {accepted && !order && <Text style={s.muted}>Registrando a compra…</Text>}
         {order?.type === "order_status_changed" && (
           <Card title="Status do pedido">
-            <Badge text={order.payload.status} />
+            <Badge text={order.payload.status === "confirmed" ? "compra registrada (simulação)" : order.payload.status} />
             <Text style={s.text}>{order.payload.summary}</Text>
           </Card>
         )}

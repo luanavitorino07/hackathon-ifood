@@ -258,6 +258,7 @@ export type AdminOverviewResponse = {
 };
 export type AiUsageNumbers = {
   sessions: number;
+  fictitious_sessions: number;
   ai_calls: number;
   input_tokens: number;
   output_tokens: number;

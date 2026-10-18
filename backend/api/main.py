@@ -82,6 +82,7 @@ def build_application(
         memory=services.memory,
         session_mode=mode,
         usage_report=services.usage,
+        order_dispatcher=services.orders,
         identity_resolver=(
             identity_resolver
             if identity_resolver is not None

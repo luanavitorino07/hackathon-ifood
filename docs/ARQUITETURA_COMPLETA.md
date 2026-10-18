@@ -131,7 +131,7 @@ Os agentes não importam HTTP, OpenCode, MCP nem banco.
 | `GET /agents` | Catálogo de agentes (somente gestor) |
 | `GET /admin/overview` | Métricas agregadas, sem dados pessoais; o que não é medido vem `null`. `estimated_ai_cost_cents` vem do custo real de IA |
 | `GET /admin/ai-usage` | Somente gestor (adição ao contrato v1): custo de IA por cliente, vendas aceitas, % da venda gasta com IA e lucro estimado |
-| `POST /orders/submit` | **Não habilitado**: responde `503 ORDER_SUBMISSION_UNAVAILABLE` (não há ferramenta de pedido) |
+| `POST /orders/submit` | Botão "Comprar": **compra simulada**. Registra o pedido no atendimento, emite `order_status_changed` e avisa no chat que nada foi enviado ao iFood nem pago. Idempotente por `client_action_id`; opção de loja fechada continua bloqueada (409) |
 
 ### Regras do contrato v1 (resumo do `PROMPT.md` §15)
 - JSON em `snake_case`, datas em UTC ISO 8601, `schema_version: 1`.
@@ -142,7 +142,8 @@ Os agentes não importam HTTP, OpenCode, MCP nem banco.
   `knowledge_retrieved`, `memory_changed`, `pattern_identified`, `discount_proposed`,
   `conflict_detected`, `decision_made`, `recommendations_ready`, `cart_changed`,
   `order_status_changed`, `error` e `session_closed`.
-  - `cart_changed` e `order_status_changed` existem no contrato, mas nenhum fluxo os emite hoje.
+  - `order_status_changed` é emitido pela compra simulada. `cart_changed` existe no contrato, mas nenhum
+    fluxo o emite.
 
 ### Identidade e segurança (modo local de demonstração)
 - `DemoIdentityResolver` usa identidades fictícias: comprador `client_demo_1` e gestor `manager_demo_1`,
@@ -208,7 +209,10 @@ Outros comportamentos do runtime:
   pedido real com 6 chamadas).
 - **Câmbio** (`APP_USD_BRL_RATE`, padrão 5,5) e **margem** (`APP_ASSUMED_MARGIN_BPS`, padrão 3000, a mesma
   da política DEMO) são parâmetros configurados, não dados. A tela os mostra.
-- No modo demo o custo é zero: não há IA paga.
+- No modo demo, a IA simulada não custa nada.
+- Os 4 clientes fictícios já começam com histórico **fictício** de custo e valor pago
+  (`demo_seed.seed_demo_usage`). O custo é aproximado pelo pedido real medido e o valor pago é 90% do
+  orçamento das ofertas aceitas. Aparece como `fictitious_sessions` e é identificado na tela.
 
 ### Transcrição (`local_transcription.py`)
 - Ativada com `APP_STT_PROVIDER=whisper` (`APP_STT_MODEL=small`).
@@ -354,8 +358,7 @@ cd frontend && npm run proxy        # abrir http://localhost:8080
 
 - **O MCP liberado só permite busca** (escopo `mcp.discovery.search.read`). Não existem ferramentas de
   carrinho, pedido, pagamento, agendamento ou desconto. Por isso:
-  - "fechado" só registra o aceite;
-  - `POST /orders/submit` responde que não está habilitado;
+  - "fechado" e o botão "Comprar" só registram uma compra **simulada** (contam uma venda por recomendação);
   - o agendamento é nosso e sempre pede confirmação.
 - **Localização:** sem endereço do cliente, as buscas usam um ponto público de teste em São Carlos. Isso
   não confirma entrega no endereço de ninguém.

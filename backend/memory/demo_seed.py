@@ -57,3 +57,25 @@ def seed_demo_customers(memory, tenant_id: str = DEMO_TENANT_ID, client_id: str 
             memory.record_offer(tenant_id, f"seed_other_{strategy}", f"seed_{strategy}_{n}", strategy,
                                 4000 + 500 * (n % 9), n < accepted, _ago(1 + n % 28))
     return count
+
+
+# Consumo de IA de um pedido de comida medido ao vivo em 18/10/2026 (Claude Haiku via OpenCode, 6 chamadas):
+# 76 tokens de entrada, 3.632 de saída, 41.351 de cache, US$ 0,005952. Base do histórico FICTÍCIO abaixo.
+_MEASURED = {"calls": 6, "input": 76, "output": 3632, "cache": 41351, "cost_usd": 0.005952}
+
+
+def seed_demo_usage(ledger, tenant_id: str = DEMO_TENANT_ID, client_id: str = DEMO_CLIENT_ID) -> int:
+    """Custo de IA e valor pago FICTÍCIOS dos clientes da demonstração, para a Análise financeira já mostrar
+    o custo por cliente. Custo aproximado pelo pedido real medido (mais pessoas = um pouco mais de IA); pago =
+    o mesmo valor das ofertas aceitas do histórico (90% do orçamento). Marcado em `fictitious_sessions`."""
+    for persona in PERSONAS:
+        history = persona["history"]
+        scale = [0.85 + 0.1 * party for _, party, *_ in history]
+        paid = [budget * 90 for _, _, budget, _, _, accepted in history if accepted]
+        ledger.seed(tenant_id, persona_key(client_id, persona["name"]), persona["name"],
+                    sessions=len(history), calls=round(_MEASURED["calls"] * sum(scale)),
+                    input_tokens=round(_MEASURED["input"] * sum(scale)),
+                    output_tokens=round(_MEASURED["output"] * sum(scale)),
+                    cache_tokens=round(_MEASURED["cache"] * sum(scale)),
+                    cost_usd=_MEASURED["cost_usd"] * sum(scale), sales=len(paid), sales_cents=sum(paid))
+    return len(PERSONAS)
