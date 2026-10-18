@@ -28,6 +28,7 @@ class _Client:
     cost_usd: float = 0.0
     sales: int = 0
     sales_cents: int = 0
+    fictitious_sessions: int = 0  # histórico FICTÍCIO da demonstração somado a este cliente
 
 
 class UsageLedger:
@@ -62,6 +63,24 @@ class UsageLedger:
                 client.cache_tokens += usage.cache_read_tokens + usage.cache_write_tokens
                 client.cost_usd += usage.cost_usd
 
+    def seed(self, tenant_id: str, client_key: str, label: str, *, sessions: int, calls: int, input_tokens: int,
+             output_tokens: int, cache_tokens: int, cost_usd: float, sales: int, sales_cents: int) -> None:
+        """Histórico FICTÍCIO (clientes da demonstração), marcado em `fictitious_sessions`."""
+        with self._lock:
+            c = self._clients.setdefault((tenant_id, client_key), _Client(label))
+            c.fictitious_sessions += sessions
+            c.calls += calls
+            c.input_tokens += input_tokens
+            c.output_tokens += output_tokens
+            c.cache_tokens += cache_tokens
+            c.cost_usd += cost_usd
+            c.sales += sales
+            c.sales_cents += sales_cents
+
+    def owner(self, session_id: str) -> tuple[str, str] | None:
+        with self._lock:
+            return self._owner.get(session_id)
+
     def add_sale(self, session_id: str, total_cents: int | None) -> None:
         with self._lock:
             key = self._owner.get(session_id)
@@ -80,7 +99,8 @@ class UsageLedger:
         with self._lock:
             rows = [self._row(c) for (tenant, _), c in self._clients.items() if tenant == tenant_id]
         rows.sort(key=lambda r: -r["ai_cost_usd_micros"])
-        totals = {k: sum(r[k] for r in rows) for k in ("sessions", "ai_calls", "input_tokens", "output_tokens",
+        totals = {k: sum(r[k] for r in rows) for k in ("sessions", "fictitious_sessions", "ai_calls",
+                                                       "input_tokens", "output_tokens",
                                                        "cache_tokens", "ai_cost_usd_micros", "ai_cost_cents",
                                                        "sales", "sales_cents")}
         totals.update(self._ratios(totals["ai_cost_cents"], totals["sales_cents"]))
@@ -98,7 +118,8 @@ class UsageLedger:
 
     def _row(self, c: _Client) -> dict[str, Any]:
         cost_cents = round(c.cost_usd * self.usd_brl * 100)
-        return {"client_label": c.label, "sessions": len(c.sessions), "ai_calls": c.calls,
+        return {"client_label": c.label, "sessions": len(c.sessions) + c.fictitious_sessions,
+                "fictitious_sessions": c.fictitious_sessions, "ai_calls": c.calls,
                 "input_tokens": c.input_tokens, "output_tokens": c.output_tokens, "cache_tokens": c.cache_tokens,
                 "ai_cost_usd_micros": round(c.cost_usd * 1_000_000), "ai_cost_cents": cost_cents,
                 "sales": c.sales, "sales_cents": c.sales_cents, **self._ratios(cost_cents, c.sales_cents)}

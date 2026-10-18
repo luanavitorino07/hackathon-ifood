@@ -91,6 +91,8 @@ function AiCostCard({ usage }: { usage: AiUsageResponse | null }) {
         Tokens e custo de cada chamada de IA e busca informados pelo provedor (OpenCode), divididos pelo valor que o
         cliente aceitou no chat. Câmbio configurado: US$ 1 = R$ {usage.usd_brl_rate.toFixed(2).replace(".", ",")}.
         Lucro estimado usa a margem suposta de {bps(usage.assumed_margin_bps)} (hipótese DEMO) menos o custo de IA.
+        {t.fictitious_sessions > 0 &&
+          ` Inclui ${t.fictitious_sessions} atendimento(s) FICTÍCIO(S) dos clientes da demonstração, com custo aproximado pelo pedido real medido.`}
       </Text>
       <View style={s.row}>
         <StatCard icon="bolt" label="Custo total de IA" value={money(t.ai_cost_cents)} hint={`${usd(t.ai_cost_usd_micros)} · ${tokens(t.input_tokens + t.output_tokens + t.cache_tokens)} tokens`} />
@@ -103,7 +105,7 @@ function AiCostCard({ usage }: { usage: AiUsageResponse | null }) {
           <View style={{ flex: 1, minWidth: 160, gap: 2 }}>
             <Text style={[s.text, { fontSize: 15, fontFamily: "InterSemiBold" }]}>{c.client_label}</Text>
             <Text style={[s.muted, { fontSize: 13 }]}>
-              {c.sessions} atendimento(s) · {c.ai_calls} chamada(s) · {tokens(c.input_tokens + c.output_tokens + c.cache_tokens)} tokens
+              {c.sessions} atendimento(s){c.fictitious_sessions > 0 ? ` (${c.fictitious_sessions} fictício(s))` : ""} · {c.ai_calls} chamada(s) · {tokens(c.input_tokens + c.output_tokens + c.cache_tokens)} tokens
             </Text>
           </View>
           <View style={{ alignItems: "flex-end", gap: 2 }}>

@@ -283,8 +283,54 @@ def test_ai_usage_is_admin_only_and_fills_overview_cost() -> None:
             assert report.status_code == 200
             body = report.json()
             assert body["usd_brl_rate"] > 0 and body["assumed_margin_bps"] == 3000
-            assert body["totals"]["ai_cost_cents"] == 0  # demo não consome IA paga
+            # demo: só o histórico FICTÍCIO dos 4 clientes da apresentação (a IA simulada não custa nada)
+            assert body["totals"]["fictitious_sessions"] == body["totals"]["sessions"] == 19
+            assert body["totals"]["ai_cost_cents"] > 0
             overview = await client.get("/api/v1/admin/overview", headers={"X-Demo-Role": "admin"})
-            assert overview.json()["metrics"]["estimated_ai_cost_cents"] == 0
+            assert overview.json()["metrics"]["estimated_ai_cost_cents"] == body["totals"]["ai_cost_cents"]
+
+    asyncio.run(scenario())
+
+
+def test_buy_button_records_simulated_purchase_and_tells_the_customer() -> None:
+    import asyncio
+    import httpx
+
+    from backend.api.main import build_application
+
+    app = build_application(runtime_mode="demo", memory_backend="ephemeral")
+    customer = {"X-Demo-Role": "customer"}
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+            sid = (await client.post("/api/v1/sessions", json={"client_id": "client_demo_1"},
+                                     headers=customer)).json()["session_id"]
+            await client.post("/api/v1/chat/messages", headers=customer, json={
+                "session_id": sid, "client_message_id": "m1", "text": "Quero pizza para 2 pessoas",
+                "input_mode": "text", "transcription_id": None})
+            for _ in range(100):
+                snap = (await client.get(f"/api/v1/sessions/{sid}/snapshot", headers=customer)).json()
+                if snap["recommendations"]:
+                    break
+                await asyncio.sleep(0.05)
+            rec = snap["recommendations"][0]
+            order = {"session_id": sid, "recommendation_id": rec["recommendation_id"],
+                     "client_action_id": "buy_1", "confirmed": True}
+            assert (await client.post("/api/v1/orders/submit", json=order, headers=customer)).status_code == 202
+            assert (await client.post("/api/v1/orders/submit", json=order, headers=customer)).status_code == 202
+            for _ in range(100):
+                events = (await client.get(f"/api/v1/sessions/{sid}/history?limit=200", headers=customer)).json()
+                statuses = [e for e in events["events"] if e["type"] == "order_status_changed"]
+                if statuses:
+                    break
+                await asyncio.sleep(0.05)
+            assert len(statuses) == 1  # o mesmo clique repetido não registra duas compras
+            assert statuses[0]["payload"]["status"] == "confirmed"
+            assert "SIMULADA" in statuses[0]["payload"]["summary"]
+            last = [e for e in events["events"] if e["type"] == "chat_message"][-1]["payload"]["message"]
+            assert "simulação" in last["text"] and "nenhum pagamento" in last["text"]
+            usage = (await client.get("/api/v1/admin/ai-usage", headers={"X-Demo-Role": "admin"})).json()
+            mine = next(c for c in usage["clients"] if c["client_label"] == "Cliente sem cadastro")
+            assert (mine["sales"], mine["sales_cents"]) == (1, rec["total_cents"])
 
     asyncio.run(scenario())

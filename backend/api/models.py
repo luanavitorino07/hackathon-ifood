@@ -486,6 +486,7 @@ class AiUsageClient(StrictModel):
 
     client_label: NonEmptyStr
     sessions: NonNegativeInt
+    fictitious_sessions: NonNegativeInt  # histórico FICTÍCIO da demonstração incluído nos números
     ai_calls: NonNegativeInt
     input_tokens: NonNegativeInt
     output_tokens: NonNegativeInt
@@ -500,6 +501,7 @@ class AiUsageClient(StrictModel):
 
 class AiUsageTotals(StrictModel):
     sessions: NonNegativeInt
+    fictitious_sessions: NonNegativeInt
     ai_calls: NonNegativeInt
     input_tokens: NonNegativeInt
     output_tokens: NonNegativeInt

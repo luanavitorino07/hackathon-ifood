@@ -1,6 +1,8 @@
 """Montagem do serviço de agentes. É o ponto de entrada que a API deve chamar."""
 from __future__ import annotations
 
+import os
+
 from .auditor import Auditor
 from .curator import Curator
 from .customer_memory_agent import CustomerMemoryAgent
@@ -12,6 +14,7 @@ from .ports import AgentRuntimePort, CustomerMemoryPort, EventSink, KnowledgePor
 from .registry import AgentRegistry
 from .researcher import Researcher
 from .schedules import InMemorySchedules
+from .usage import UsageLedger
 from .strategist import SalesStrategist
 
 
@@ -44,6 +47,18 @@ def default_customers() -> CustomerMemoryPort | None:
     return default_customer_memory()
 
 
+def default_usage(seed: bool = True) -> UsageLedger:
+    """Livro de custo de IA; com a memória padrão, já traz o histórico FICTÍCIO dos clientes da demo."""
+    ledger = UsageLedger()
+    if seed and os.getenv("APP_DEMO_CUSTOMERS", "1") != "0":
+        try:
+            from backend.memory.demo_seed import seed_demo_usage
+        except ImportError:
+            return ledger
+        seed_demo_usage(ledger)
+    return ledger
+
+
 def build_orchestrator(runtime: AgentRuntimePort, memory: MemoryPort, sink: EventSink,
                        registry: AgentRegistry | None = None,
                        knowledge: KnowledgePort | None | object = _DEFAULT,
@@ -55,5 +70,7 @@ def build_orchestrator(runtime: AgentRuntimePort, memory: MemoryPort, sink: Even
     kb = default_knowledge() if knowledge is _DEFAULT else knowledge
     cm = default_customers() if customers is _DEFAULT else customers
     sc = InMemorySchedules() if schedules is _DEFAULT else schedules
+    if usage is None:
+        usage = default_usage(seed=customers is _DEFAULT)
     return Orchestrator(registry or build_registry(), runtime, memory, sink, kb, cm, sc, clock,  # type: ignore[arg-type]
                         usage)

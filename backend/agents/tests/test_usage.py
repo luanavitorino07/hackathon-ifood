@@ -47,6 +47,26 @@ class UsageTest(unittest.TestCase):
         self.assertEqual(row["ai_cost_share_bps"], round(row["ai_cost_cents"] * 10000 / total))
         self.assertEqual(row["estimated_profit_cents"], round(total * 0.3) - row["ai_cost_cents"])
 
+    def test_buy_button_after_confirm_counts_one_sale_and_tells_customer(self):
+        runtime = PaidRuntime(reasoning={"interpreter": ORDER})
+        sink = RecordingSink()
+        orch = build_orchestrator(runtime, InMemoryMemory(), sink, customers=SQLiteCustomerMemory(),
+                                  usage=UsageLedger(usd_brl=5.0, margin_bps=3000))
+        out = orch.handle_message(SessionContext("s1", "t", "cli", "demo", "quero pizza"))
+        rec = out.recommendations[0]
+        runtime.reasoning["interpreter"] = CONFIRM
+        orch.handle_message(SessionContext("s1", "t", "cli", "demo", "fechado"))
+        first = orch.simulate_purchase("s1", rec["recommendation_id"], "click_1")
+        again = orch.simulate_purchase("s1", rec["recommendation_id"], "click_1")
+        self.assertEqual(first, again)
+        self.assertTrue(first["simulated"])
+        row = orch.usage_report("t")["clients"][0]
+        self.assertEqual((row["sales"], row["sales_cents"]), (1, rec["total_cents"]))
+        statuses = [e for e in sink.events if e["type"] == "order_status_changed"]
+        self.assertEqual(len(statuses), 1)
+        self.assertEqual(statuses[0]["visibility"], "both")
+        self.assertIn("nenhum pagamento foi feito", sink.events[-1]["payload"]["message"]["text"])
+
     def test_without_sale_share_is_unknown_and_tenants_are_isolated(self):
         orch = build_orchestrator(PaidRuntime(reasoning={"interpreter": ORDER}), InMemoryMemory(), RecordingSink(),
                                   customers=SQLiteCustomerMemory())
