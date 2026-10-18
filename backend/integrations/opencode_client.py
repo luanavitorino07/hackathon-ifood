@@ -86,9 +86,11 @@ class OpenCodeClient:
         session_id: str,
         *,
         prompt: str,
+        system: str | None = None,
         agent: str | None = None,
         tools: Mapping[str, bool] | None = None,
         output_schema: Mapping[str, Any] | None = None,
+        timeout_seconds: float | None = None,
     ) -> OpenCodeRunResult:
         if not session_id or not prompt.strip():
             raise ValueError("session_id e prompt são obrigatórios")
@@ -101,6 +103,8 @@ class OpenCodeClient:
         }
         if agent:
             body["agent"] = agent
+        if system:
+            body["system"] = system
         if tools is not None:
             body["tools"] = dict(tools)
         if output_schema is not None:
@@ -110,8 +114,13 @@ class OpenCodeClient:
                 "retryCount": 1,
             }
 
+        request_options: dict[str, Any] = {"json": body}
+        if timeout_seconds is not None:
+            if timeout_seconds <= 0:
+                raise ValueError("timeout_seconds precisa ser maior que zero")
+            request_options["timeout"] = timeout_seconds
         data = await self._request_json(
-            "POST", f"/session/{session_id}/message", json=body
+            "POST", f"/session/{session_id}/message", **request_options
         )
         info = data.get("info")
         if not isinstance(info, Mapping):

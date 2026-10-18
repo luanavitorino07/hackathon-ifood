@@ -5,6 +5,7 @@ expostos aqui são detalhes usados pela futura implementação concreta desse
 contrato e não constituem uma segunda API entre módulos.
 """
 
+from .agent_runtime import OpenCodeAgentRuntime
 from .config import IFOOD_MCP_URL, OpenCodeSettings, SandboxLocation
 from .errors import (
     IntegrationError,
@@ -22,6 +23,7 @@ __all__ = [
     "IntegrationError",
     "InvalidOutputError",
     "OpenCodeClient",
+    "OpenCodeAgentRuntime",
     "OpenCodeHealth",
     "OpenCodeRunResult",
     "OpenCodeSettings",
