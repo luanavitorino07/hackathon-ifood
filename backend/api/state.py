@@ -123,6 +123,17 @@ class InMemoryBackendState:
     async def accept_message(
         self, request: ChatMessageRequest, identity: RequestIdentity
     ) -> ChatAcceptedResponse:
+        response, _ = await self.accept_message_once(request, identity)
+        return response
+
+    async def accept_message_once(
+        self, request: ChatMessageRequest, identity: RequestIdentity
+    ) -> tuple[ChatAcceptedResponse, bool]:
+        """Aceita atomicamente; só o primeiro envio deve agendar os agentes.
+
+        O booleano é interno e não altera o DTO público HTTP. A garantia vale
+        neste processo, assim como o restante de InMemoryBackendState.
+        """
         async with self._condition:
             record = self._require_access_locked(request.session_id, identity)
             serialized = request.model_dump(mode="json")
@@ -137,7 +148,7 @@ class InMemoryBackendState:
                 return ChatAcceptedResponse(
                     session_id=request.session_id,
                     client_message_id=request.client_message_id,
-                )
+                ), False
 
             record.accepted_messages[request.client_message_id] = serialized
             message = ChatMessage(
@@ -160,7 +171,7 @@ class InMemoryBackendState:
         return ChatAcceptedResponse(
             session_id=request.session_id,
             client_message_id=request.client_message_id,
-        )
+        ), True
 
     async def publish_event(
         self,

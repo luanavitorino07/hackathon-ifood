@@ -157,6 +157,49 @@ def test_runtime_requires_coordinates_when_sandbox_fallback_is_absent() -> None:
     assert result.detail == "location_required"
 
 
+def test_runtime_uses_sao_carlos_preset_in_actual_tool_prompt(monkeypatch) -> None:
+    from backend.integrations.config import SAO_CARLOS_TEST_COORDINATES
+
+    monkeypatch.delenv("IFOOD_SANDBOX_LATITUDE", raising=False)
+    monkeypatch.delenv("IFOOD_SANDBOX_LONGITUDE", raising=False)
+    monkeypatch.setenv("IFOOD_TEST_LOCATION", "sao_carlos")
+    location = SandboxLocation.from_env()
+    client = _FakeOpenCode({"resultKind": "ITEM", "results": []})
+    original_prompt = client.run_prompt
+
+    async def matching_tool_result(session_id, **kwargs):
+        response = await original_prompt(session_id, **kwargs)
+        response.raw_response["parts"][0]["state"]["input"]["userLocation"] = {
+            "latitude": location.latitude, "longitude": location.longitude,
+        }
+        return response
+
+    client.run_prompt = matching_tool_result
+    runtime = OpenCodeAgentRuntime(
+        OpenCodeSettings(), sandbox_location=location, client_factory=lambda: client,
+    )
+    result = asyncio.run(runtime._execute(_call(location="São Carlos, SP")))
+    assert result.ok is True
+    latitude, longitude = SAO_CARLOS_TEST_COORDINATES
+    assert f'"latitude": {latitude}' in client.prompt_kwargs["prompt"]
+    assert f'"longitude": {longitude}' in client.prompt_kwargs["prompt"]
+    assert "-23.5505" not in client.prompt_kwargs["prompt"]
+    assert result.detail == "test_location_used"
+    assert "não é a localização do cliente" in result.traces[0].summary
+
+
+def test_customer_coordinates_override_public_test_preset():
+    from backend.integrations.agent_runtime import _resolve_location
+    from backend.integrations.config import SAO_CARLOS_TEST_COORDINATES
+
+    resolved = _resolve_location(
+        {"location": {"latitude": -20.0, "longitude": -40.0}},
+        SandboxLocation(*SAO_CARLOS_TEST_COORDINATES, source="public_test"),
+    )
+    assert resolved.source == "context"
+    assert resolved.coordinates == {"latitude": -20.0, "longitude": -40.0}
+
+
 def test_timed_out_execution_is_aborted_and_client_closed() -> None:
     client = _FakeOpenCode({})
     aborted = []

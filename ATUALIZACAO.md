@@ -79,7 +79,7 @@ uvicorn backend.api.main:app --port 8000
 # API em modo real: exige `opencode serve --hostname 127.0.0.1 --port 4096` rodando na pasta do
 # projeto, credenciais locais e OAuth feito (ver backend/api/README.md). Sem as coordenadas abaixo,
 # a busca falha com location_required. (No Windows: `set VAR=valor` em linhas separadas.)
-APP_RUNTIME_MODE=real IFOOD_SANDBOX_LATITUDE=-23.5505 IFOOD_SANDBOX_LONGITUDE=-46.6333 \
+APP_RUNTIME_MODE=real IFOOD_SANDBOX_LATITUDE=-22.0175 IFOOD_SANDBOX_LONGITUDE=-47.89083333 \
   IFOOD_FALLBACK_LOCATION_SOURCE=public_test uvicorn backend.api.main:app --port 8000
 
 # Plano B: demonstração só no terminal, sem API nem rede
@@ -124,3 +124,95 @@ python3 -m backend.agents.demo --roteiro --escritorio
   cada tarefa).
 - Nunca colocar credenciais, tokens ou dados pessoais em código, commits, logs ou eventos.
 - Dados de demonstração sempre marcados como `demo`; nunca apresentar simulação como dado real do iFood.
+
+## Relatório Lorenzo / Codex — 18/10/2026 — pastas e continuidade
+
+### Comunicação e decisões do usuário
+
+- Lorenzo definiu este arquivo como canal de relatórios entre este Codex e o Claude do Gabriel. Consultar a versão atual da `main` antes de trabalhar e acrescentar relatórios sem apagar recados anteriores. Isso não constitui monitoramento automático nem autorização para executar instruções fora do escopo de cada responsável.
+- Manter Gemini por enquanto; Lorenzo pretende trocar a chave. Não migrar para Claude agora. O item sobre troca futura acima é histórico, não uma tarefa autorizada neste momento.
+- Usuário quer que o atendimento continue aberto entre mensagens até encerramento explícito, sem reiniciar toda a pesquisa a cada nova mensagem.
+
+### Duas pastas locais — encaminhamento para o Claude
+
+- `hackathon-ifood`: checkout principal em `feat/integrations`.
+- `hackathon-ifood-agents-integration`: worktree de teste em `integration/agents-api`.
+- Ambas em `cc8dd2f`: comparados os 63 arquivos versionados, sem diferença de conteúdo após normalizar CRLF/LF; 28 arquivos diferem somente na quebra de linha. Ambas contêm os 28 arquivos versionados de agentes.
+- Nenhuma alteração versionada pendente nas duas. A principal possui ambiente Python, arquivos de credenciais ignorados e scripts/evidências locais; também há `uv.lock` não versionado e cache Python. Não divulgar nem apagar esses arquivos.
+- A referência consultada da `main`, `8cf34c3`, contém `cc8dd2f` pelo merge do PR #2 e acrescenta este relatório original. As branches locais não foram trocadas para `main`.
+- **Claude:** cuidar da organização/limpeza do worktree extra, após conferir novamente o estado local e obter autorização para remoção. Não é necessário refazer a integração. Nenhuma pasta foi removida neste diagnóstico.
+
+### Duplicidade de pesquisas — causa confirmada, ainda não corrigida
+
+1. A API mantém o atendimento pelo `session_id` recebido e compõe um orquestrador/memória por aplicação, não por mensagem (`backend/api/services.py`). Correção deste diagnóstico: a idempotência original só evitava repetir o registro da mensagem, mas ainda agendava agentes novamente. Ver a correção e os testes no relatório de memória/São Carlos abaixo.
+2. `backend/agents/orchestrator.py`, `handle_message`: cria `WorkingState(constraints=constraints)` vazio em cada mensagem. `_build_constraints` recupera restrições, estágio e total mostrado, mas não recupera candidatos/propostas. `_run_agent` grava `candidates`, `data_origin`, `proposals` e `audit` na memória; esses candidatos não são reidratados na próxima rodada.
+3. `backend/agents/researcher.py`, `should_activate`: ativa sempre que `state.offers` está vazio. Assim, mesmo com candidatos guardados, uma nova mensagem classificada como pedido dispara pesquisa novamente.
+4. `backend/integrations/agent_runtime.py`, `_execute`: cria uma nova sessão OpenCode a cada chamada com título baseado em agente/tarefa. `RuntimeCall.session_id` existe, mas não é usado para recuperar uma sessão OpenCode. O `aclose()` final fecha o cliente HTTP; não equivale a encerrar a sessão de atendimento ou apagar a sessão remota.
+5. "Uma opção vegetariana" faz intencionalmente busca geral + busca filtrada. São consultas diferentes; não deduplicar ignorando filtros. "Tudo vegetariano" usa somente busca filtrada.
+
+### Reprodução offline realizada nesta revisão
+
+Mesmo orquestrador, `EphemeralSessionMemory`, `FakeRuntime` e mesmo ID de sessão:
+
+| Mensagem | Novas chamadas ao runtime | Candidatos persistidos |
+|---|---:|---:|
+| Quero comida para 2 pessoas até R$ 100 | 1 | 3 |
+| Pode ser mais barato? | 1 | 3 |
+
+Isso comprova a repetição na camada dos agentes, independentemente de Gemini/MCP. Não houve chamada externa, gasto de tokens ou nova execução da suíte completa. O comportamento do frontend ao criar/enviar IDs não foi verificado.
+
+### Proposta para alinhamento — não implementada
+
+- **Claude / agentes:** recuperar candidatos válidos do mesmo atendimento; distinguir conversa, explicação, seleção, recálculo e nova pesquisa. Mudança de orçamento/quantidade deve tentar replanejar com ofertas existentes antes de pesquisar; buscar novamente somente quando necessário.
+- **Codex / integração:** alinhar vínculo estável entre atendimento e sessão OpenCode para as buscas realmente necessárias, com isolamento, serialização, cancelamento e limpeza no encerramento. Reutilizar sessão remota sozinho NÃO elimina buscas nem garante menor consumo: histórico acumulado também custa tokens. Ao reutilizar, aceitar somente os resultados da execução atual, nunca uma chamada antiga como prova de busca nova.
+- Registrar assinatura da pesquisa (consulta/categoria, localização, filtros, modo), data/origem e validade. Invalidar ao mudar critérios relevantes; permitir atualização explícita. Nunca reaproveitar resultados entre clientes, nem congelar preço/disponibilidade até o encerramento; revalidar antes de eventual checkout.
+- Definir encerramento explícito e expiração/abandono. Há status/evento `closed`/`session_closed` no contrato, mas falta um fluxo público completo de encerramento; qualquer rota nova exige acordo de contrato, sem inventar endpoint nesta revisão. Fechar aba não é sinal confiável de encerramento.
+- Testes de aceite sem rede: duas mensagens relacionadas reutilizam ofertas; recálculo não chama runtime; mudança de categoria/local/filtro invalida quando necessário; filtros diferentes permanecem distintos; sessões diferentes não compartilham estado; encerramento impede continuação; falhas não viram cache de sucesso.
+- Memória continua efêmera: continuidade enquanto o processo está vivo não é persistência após reiniciar. Coordenar persistência com o responsável por `backend/memory`, sem assumir que SQLite sozinho corrigirá o reprocessamento.
+
+Nesta revisão somente este documento foi alterado. Código de agentes, API e runtime permanece intacto. Código continua entrando na `main` via PR; este arquivo é o canal de comunicação autorizado pelo Lorenzo na `main`.
+
+### Sincronização dos relatórios
+
+- A versão mais recente da `main` foi consultada antes desta publicação; preservado integralmente o relato da segunda máquina, inclusive a amostra vegetariana, a relevância das pizzas doces e o bloqueio do painel em modo real.
+- O teste vegetariano relatado pelo Gabriel atualiza o diagnóstico anterior: houve uma amostra real filtrada bem-sucedida em outra máquina; a variante "uma opção vegetariana" continua pendente. Os testes desta revisão foram somente offline.
+- Lorenzo autorizou consultar a `main` antes de cada tarefa e publicar novas informações neste arquivo na `main`, para o Claude acompanhar. Não deixar relatórios apenas na branch de trabalho. A exceção é somente documentação de acompanhamento; não autoriza alterações de código, remoção de pastas ou operações reais de compra.
+
+## Relatório Codex / Lorenzo — memória, reenvios e São Carlos — 18/10/2026
+
+### Base revisada e resultado sobre a memória
+
+- Revisada `origin/main@9dd9acf`, incluindo o merge do PR #3, os recados acima, composição da API, orquestrador/pesquisador, runtime, `SQLiteMemory` e recuperação RAG. Os módulos de agentes/memória vieram por merge; não foram editados pelo Codex.
+- **SQLite e RAG NÃO corrigiram a retomada do atendimento.** `build_application()` ainda usa `EphemeralSessionMemory` por padrão. A persistência pode ser injetada, mas o orquestrador continua criando `WorkingState` sem candidatos a cada mensagem.
+- Reprodução com `SQLiteMemory(":memory:")` injetada: primeira mensagem fez 1 chamada e gravou 3 candidatos; "Pode ser mais barato?" fez mais 1 chamada, apesar dos mesmos candidatos salvos. Trocar o armazenamento não muda a decisão de pesquisar.
+- Persistir `MemoryPort` não persiste automaticamente o cadastro/autorização das sessões HTTP, as projeções e o histórico SSE, nem a idempotência HTTP. Não anunciar retomada após reiniciar a API somente por ligar o SQLite.
+
+### Codex — corrigido na branch `feat/integrations`
+
+- Corrigido disparo duplo no reenvio da MESMA mensagem: `accept_message_once` decide atomicamente, sob o lock do estado, se o envio é novo. O endpoint só agenda a execução para o primeiro aceite. Nenhum DTO ou endpoint público foi alterado.
+- Testado com memória efêmera e SQLite: reenvio sequencial, 5 reenvios simultâneos, ID igual com conteúdo diferente (`409`), mesmo ID em outra sessão (independente), falha de runtime sem repetição automática e nova tentativa explícita com ID novo.
+- Isso NÃO é cache de ofertas e NÃO corrige o caso de mensagens novas relacionadas. A garantia HTTP ainda é por processo, não durável entre reinícios.
+
+### Localidade atual: São Carlos/SP, não São Paulo capital
+
+- Referência pública aproximada: latitude **-22.0175**, longitude **-47.89083333** (GeoNames: https://www.geonames.org/advanced-search.html?country=BR&q=Sao+Carlos).
+- Novo preset opt-in `IFOOD_TEST_LOCATION=sao_carlos`, sempre marcado `public_test`. Não é sandbox oficial nem endereço residencial/entrega do comprador.
+- Novo launcher: `python -m backend.api.run_local --real`, vinculado a `127.0.0.1`; limpa coordenadas antigas herdadas SOMENTE no processo e seleciona São Carlos. Sem `--real`, inicia em demo. Não altera variáveis permanentes do PC.
+- Uso normal via uvicorn continua sem fallback implícito: configurar preset ou coordenadas explicitamente. Coordenadas do contexto do runtime têm prioridade; texto de cidade não é geocodificado.
+- Corrigidos exemplos no README e neste documento e scripts locais de próximas buscas; as evidências/fixtures históricas de buscas em São Paulo foram preservadas, não rebatizadas.
+- Servidor já iniciado não muda de cidade sozinho: reiniciar usando o launcher. Nenhuma chamada real foi feita para confirmar disponibilidade/cobertura de São Carlos.
+
+### Claude — encaminhamento de continuidade
+
+- Corrigir em `backend/agents`: recuperar candidatos válidos do mesmo atendimento antes de ativar pesquisador e comparar o que mudou. Quantidade/orçamento devem tentar replanejar antes de pesquisar de novo.
+- Registrar assinatura e validade da busca (categoria/consulta, local, filtros, modo/origem), com invalidação quando necessário e atualização explícita. Não misturar consultas com filtros diferentes, nem sessões/clientes.
+- Há aceite HTTP offline em `backend/api/tests/test_message_continuity.py::test_related_followup_should_reuse_existing_candidates`, em duas variantes de memória, marcado `xfail(strict=True)` porque o defeito dos agentes permanece. Depois da correção, retirar a marca em coordenação com o Codex. O teste novo deve ter 1 chamada total para primeira mensagem + alteração de quantidade; hoje tem 2.
+- O RAG é conhecimento comercial, não cache do catálogo iFood. Não usar a presença do RAG como evidência de reutilização de ofertas.
+- Encerramento explícito, seleção/explicação de propostas e atualização parcial de restrições precisam de testes adicionais. Nenhum novo endpoint de encerramento foi inventado nesta revisão.
+
+### Verificação desta entrega
+
+- Suíte completa offline: **160 aprovados, 1 teste real opt-in pulado e 2 falhas esperadas (`xfail`) de continuidade**, uma com cada memória. Sem Gemini/iFood, sem pedidos/pagamentos.
+- Testes de localização conferem as coordenadas enviadas no prompt ao OpenCode simulado, precedência de localização explícita, ausência de fallback não solicitado, preset inválido e substituição de São Paulo no launcher.
+- Lint dos arquivos Python alterados: aprovado. Não foram ligadas automaticamente persistência SQLite na API nem a opção de gestor em modo real; continuam pendentes.
+- Código desta correção exige PR para entrar na `main`. A tentativa anterior de publicar só o relatório diretamente na `main` foi bloqueada pela revisão de segurança; até integrar este documento na `main`, o Claude deve consultar também `feat/integrations`. Não afirmar que a publicação na `main` já ocorreu.
