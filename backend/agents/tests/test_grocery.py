@@ -24,6 +24,33 @@ class NoAIRuntime(DemoCatalogRuntime):
         return super().run(call)
 
 
+class PartialAIRuntime(DemoCatalogRuntime):
+    """Reproduz o bug da demo real: com muitos produtos, a IA do Montador julga só uma parte (aqui, só o arroz)."""
+
+    def run(self, call):
+        out = super().run(call)
+        if call.agent_id == "grocery_basket" and out.ok:
+            out.structured["produtos"] = [p for p in out.structured["produtos"] if p["product_id"] in {"gm1", "ge1"}]
+        return out
+
+
+class ManyOffersRuntime(FakeRuntime):
+    """20 arrozes de 6 mercados por busca; registra quantos produtos foram enviados à IA."""
+
+    def __init__(self):
+        offers = [{"product_id": f"a{n}", "name": f"Arroz Tipo 1 Marca {n} 5kg", "unit_price_cents": 2000 + n,
+                   "merchant_id": f"m{n % 6}", "merchant_name": f"Mercado {n % 6}", "tags": [],
+                   "delivery_fee_cents": 500, "other_fees_cents": 0, "eta_minutes": 40} for n in range(20)]
+        super().__init__(offers=offers, reasoning={"grocery_basket": self._judge})
+        self.sent = 0
+
+    def _judge(self, prompt):
+        import json, re
+        products = json.loads(re.search(r"PRODUTOS_JSON:\s*(.*)", prompt).group(1))
+        self.sent = len(products)
+        return {"produtos": [{"product_id": p["product_id"], "fit": "sim", "quantidade": 1} for p in products]}
+
+
 def make(runtime=None, mode="demo", clock=None):
     sink = RecordingSink()
     now = clock or [NOW]
@@ -43,7 +70,7 @@ class ParsingTest(unittest.TestCase):
     def test_list_with_quantities_sizes_and_accents(self):
         items = parse_items("compra do mês no mercado: arroz 5kg, 2 pacotes de feijão, 3 leites, café e 1 dúzia de ovos")
         self.assertEqual([i.label() for i in items],
-                         ["arroz (5 kg)", "2x feijão", "3x leites", "café", "ovos (1 dúzia)"])
+                         ["arroz (5 kg)", "2x feijão", "3x leite", "café", "ovos (1 dúzia)"])
 
     def test_edit_list(self):
         items = parse_items("mercado: arroz, feijão")
@@ -95,6 +122,21 @@ class GroceryFlowTest(unittest.TestCase):
         scoped = [c for c in runtime.calls if c.context.get("merchant_id")]
         self.assertEqual([c.context["merchant_id"] for c in scoped], ["demo_mercado_1"])  # cerveja no Bom Preço
         self.assertIn("Não encontrei neste mercado: cerveja", out.reply_text)
+
+    def test_products_the_ai_did_not_judge_fall_back_to_words(self):
+        """Bug da demo: 'adiciona detergente' -> 100 produtos, IA julgou só parte e a cesta ficou só com arroz."""
+        _, _, say, _ = make(PartialAIRuntime())
+        out = say("lista do mercado: arroz 5kg, 2 feijões, leite, café e detergente")
+        rec = out.recommendations[0]
+        self.assertEqual(rec["merchant_name"], "Mercado Bom Preço Demo")
+        self.assertEqual(len(rec["items"]), 5)
+        self.assertNotIn("Doce de Leite 400g", names(out))
+
+    def test_ai_receives_at_most_six_candidates_per_item(self):
+        runtime = ManyOffersRuntime()
+        _, _, say, _ = make(runtime)
+        say("mercado: arroz")
+        self.assertEqual(runtime.sent, 6)
 
     def test_lactose_restriction_picks_lactose_free_milk(self):
         _, _, say, _ = make()

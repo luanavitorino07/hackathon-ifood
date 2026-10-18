@@ -21,13 +21,14 @@ from .registry import AgentContext, AgentDefinition
 from .relevance import _words
 
 BASKET_ID = "grocery_basket"
-MAX_PER_ITEM = 8  # produtos por item da lista enviados à IA
+MAX_PER_ITEM = 6  # candidatos por item enviados à IA (lista grande demais faz a IA julgar só uma parte)
 SYSTEM = ("Você é o Montador da cesta de um app de compras de supermercado. Para cada produto de PRODUTOS_JSON, "
           "diga se ele é o item da lista indicado em 'item_id' (LISTA_JSON): 'sim' (é o item), 'parcial' (parecido, "
           "outra marca/versão aceitável) ou 'nao' (outro produto: ex. 'doce de leite' para 'leite', 'tempero' para "
           "'frango'). Em 'quantidade', diga quantas unidades desse produto comprar para atender ao pedido: use "
           "'quantidade' e 'detalhe' do item (ex.: detalhe '5 kg' e pacote de 1 kg = 5; pacote de 5 kg = 1; "
-          "'2x leite' = 2); null se não der para saber. Em 'viola_restricoes', os ids de RESTRICOES_JSON que o "
+          "'2x leite' = 2); null se não der para saber. Sem 'detalhe', o cliente quer a embalagem padrão (ex.: arroz/feijão "
+          "1 kg, leite 1 L, café 500 g): marque 'parcial' as embalagens bem menores (feijão 250 g) ou de atacado. Em 'viola_restricoes', os ids de RESTRICOES_JSON que o "
           "produto contraria ou provavelmente contraria (ex.: leite integral para sem lactose); lista vazia se "
           "nenhum. Em 'atende_restricoes', as de dieta (vegetariano/vegano) que o nome deixa claro que atende. Use "
           "só os produtos informados; não invente produtos nem preços. Motivo em até 10 palavras.")
@@ -78,17 +79,29 @@ class GroceryBasket:
     def should_activate(self, session: SessionContext, state: WorkingState) -> bool:
         return bool(state.shopping_list) and bool(state.offers)
 
+    @staticmethod
+    def _candidates(st: WorkingState, open_offers: list[Offer]) -> list[Offer]:
+        """Até MAX_PER_ITEM por item: primeiro o que bate pelas palavras, nos mercados que mais cobrem a lista."""
+        by_name = {i.name: i for i in st.shopping_list}
+        rank = {"sim": 0, "parcial": 1, "nao": 2}
+        fit = {o.product_id: _rule_fit(o, by_name[st.grocery_of[o.product_id]]) for o in open_offers}
+        coverage: dict[str, set[str]] = defaultdict(set)
+        for o in open_offers:
+            if fit[o.product_id] != "nao":
+                coverage[o.merchant_id].add(st.grocery_of[o.product_id])
+        chosen: list[Offer] = []
+        for item in st.shopping_list:
+            pool = [o for o in open_offers if st.grocery_of[o.product_id] == item.name]
+            pool.sort(key=lambda o: (rank[fit[o.product_id]], -len(coverage[o.merchant_id]), o.unit_price_cents))
+            chosen += pool[:MAX_PER_ITEM]
+        return chosen
+
     def _judge(self, ctx: AgentContext, open_offers: list[Offer]) -> bool:
         st = ctx.state
         ids = {i.name: f"i{n}" for n, i in enumerate(st.shopping_list, 1)}
-        per_item: dict[str, int] = defaultdict(int)
-        products = []
-        for o in open_offers:
-            item = st.grocery_of.get(o.product_id)
-            if item in ids and per_item[item] < MAX_PER_ITEM * 3:
-                per_item[item] += 1
-                products.append({"product_id": o.product_id, "item_id": ids[item], "produto": o.name,
-                                 "mercado": o.merchant_name, "preco": f"R$ {o.unit_price_cents / 100:.2f}"})
+        products = [{"product_id": o.product_id, "item_id": ids[st.grocery_of[o.product_id]], "produto": o.name,
+                     "mercado": o.merchant_name, "preco": f"R$ {o.unit_price_cents / 100:.2f}"}
+                    for o in self._candidates(st, open_offers)]
         restrictions = {r: restriction_label(r) for r in required_restrictions(st)}
         prompt = (f"Pedido do cliente: {ctx.session.message_text}\n"
                   f"LISTA_JSON: {json.dumps([{'id': ids[i.name], 'item': i.name, 'quantidade': i.quantity, 'detalhe': i.note} for i in st.shopping_list], ensure_ascii=False)}\n"
@@ -110,10 +123,14 @@ class GroceryBasket:
         st, c = ctx.state, ctx.state.constraints
         open_offers = [o for o in st.offers if o.is_open is not False and o.product_id in st.grocery_of]
         closed = sum(1 for o in st.offers if o.is_open is False)
-        ai_ran = self._judge(ctx, open_offers)
         by_name = {i.name: i for i in st.shopping_list}
-        fit = (lambda o: st.ai_fit.get(o.product_id, ("nao", ""))[0]) if ai_ran else \
-            (lambda o: _rule_fit(o, by_name[st.grocery_of[o.product_id]]))
+        open_offers = [o for o in open_offers if st.grocery_of[o.product_id] in by_name]
+        ai_ran = self._judge(ctx, open_offers)
+
+        def fit(o: Offer) -> str:
+            """Julgamento da IA; produto que ela não avaliou fica com a correspondência por palavras."""
+            judged = st.ai_fit.get(o.product_id)
+            return judged[0] if judged else _rule_fit(o, by_name[st.grocery_of[o.product_id]])
         by_merchant: dict[str, list[Offer]] = defaultdict(list)
         for o in open_offers:
             by_merchant[o.merchant_id].append(o)
@@ -124,12 +141,13 @@ class GroceryBasket:
             picked: list[tuple[Offer, int]] = []
             missing: list[str] = []
             by_ai: set[str] = set()
+            unchecked = unsized = False  # algum produto escolhido sem avaliação da IA (restrição / tamanho)
             for item in st.shopping_list:
                 options = []
                 for o in pool:
                     if st.grocery_of.get(o.product_id) != item.name or fit(o) == "nao":
                         continue
-                    allowed, only_ai = restriction_ok(st, o, ai_ran)
+                    allowed, only_ai = restriction_ok(st, o, o.product_id in st.ai_fit)
                     if allowed:
                         options.append((o, only_ai))
                 if not options:
@@ -139,6 +157,9 @@ class GroceryBasket:
                 best, only_ai = min(options, key=lambda x: (fit(x[0]) != "sim", x[0].unit_price_cents * qty(x[0]),
                                                             x[0].product_id))
                 picked.append((best, qty(best)))
+                judged = best.product_id in st.ai_fit
+                unchecked |= not judged and not all(r in {slug(t) for t in best.tags} for r in required)
+                unsized |= bool(item.note) and best.product_id not in st.ai_quantity
                 if only_ai:
                     by_ai.update(r for r in required if r not in {slug(t) for t in best.tags})
             if not picked:
@@ -148,12 +169,12 @@ class GroceryBasket:
             warnings: list[str] = []
             if missing:
                 warnings.append("Não encontrei neste mercado: " + ", ".join(missing))
-            if required and not ai_ran:
+            if required and unchecked:
                 warnings.append("Restrições não verificadas: " + ", ".join(restriction_label(r) for r in required)
                                 + "; confira os rótulos")
             for r in sorted(by_ai - LIFESTYLE_RESTRICTIONS):
                 warnings.append(f"Restrição '{restriction_label(r)}' avaliada pela IA: confira o rótulo")
-            if any(i.note for i in st.shopping_list) and not ai_ran:
+            if unsized:
                 warnings.append("Tamanhos pedidos não conferidos: confira as embalagens")
             rec = build_recommendation(pool[0], picked, st.data_origin, reasons, warnings)
             known = rec["total_cents"] if rec["total_cents"] is not None else rec["subtotal_cents"]
