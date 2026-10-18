@@ -8,10 +8,12 @@ from .events import ORCHESTRATOR_ID, EventEmitter, new_id
 from .intent import constraints_from_initial_context, extract_constraints, overlay, wants_cheaper
 from .models import AgentResult, AgentsOutput, Constraints, SessionContext, WorkingState, tag_requirements
 from .ports import AgentRuntimePort, EventSink, MemoryPort, RevisionConflict
-from .registry import Agent, AgentContext, AgentRegistry
+from .failures import classify_failure
+from .registry import Agent, AgentContext, AgentDefinition, AgentRegistry
 
-_ERROR_CODES = {"quota": ("LLM_QUOTA", True), "timeout": ("LLM_TIMEOUT", True),
-                "invalid_output": ("LLM_INVALID_OUTPUT", True), "unavailable": ("LLM_UNAVAILABLE", True)}
+ORCHESTRATOR_DEFINITION = AgentDefinition(
+    ORCHESTRATOR_ID, "Orquestrador", "Coordenação do atendimento",
+    "Conversa com o cliente, decide quais especialistas acionar e resolve conflitos", ["orchestration"])
 
 
 def _brl(cents: int | None) -> str:
@@ -24,7 +26,7 @@ class Orchestrator:
         self._registry, self._runtime, self._memory, self._sink = registry, runtime, memory, sink
 
     def catalog(self) -> list[dict[str, object]]:
-        return self._registry.catalog()
+        return [ORCHESTRATOR_DEFINITION.to_dict()] + self._registry.catalog()
 
     # ------------------------------------------------------------------
     def handle_message(self, session: SessionContext) -> AgentsOutput:
@@ -92,13 +94,13 @@ class Orchestrator:
         return AgentsOutput("waiting_customer", text, [])
 
     def _fail(self, events: EventEmitter, result: AgentResult) -> AgentsOutput:
-        code, retryable = _ERROR_CODES.get(str(result.output.get("error")), ("AGENT_ERROR", False))
-        events.error(code, result.justification, retryable)
-        events.agent_status(ORCHESTRATOR_ID, "error", None, result.justification)
-        text = ("No momento não consegui consultar as opções. Pode tentar novamente em instantes?"
-                if retryable else "Tive um problema ao preparar sua recomendação. Pode reformular o pedido?")
-        events.assistant_message(text)
-        return AgentsOutput("error" if not retryable else "active", text, [])
+        f = classify_failure(result.output.get("error"), result.output.get("detail"),
+                             result.output.get("retry_after_s"))
+        events.error(f.code, f.admin_text, f.retryable)
+        events.agent_status(ORCHESTRATOR_ID, "error" if f.session_status == "error" else "waiting",
+                            None, f.admin_text)
+        events.assistant_message(f.customer_text)
+        return AgentsOutput(f.session_status, f.customer_text, [])
 
     def _finish(self, session_id: str, state: WorkingState, events: EventEmitter,
                 limitations: list[str]) -> AgentsOutput:

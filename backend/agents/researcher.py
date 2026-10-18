@@ -112,7 +112,8 @@ class Researcher:
             ctx.events.tool_activity("researcher", t.call_id, t.tool_name, t.provider,
                                      t.status, t.duration_ms, t.summary)
         if not outcome.ok:
-            return AgentResult("researcher", "error", {"error": outcome.error, "detail": outcome.detail},
+            return AgentResult("researcher", "error", {"error": outcome.error, "detail": outcome.detail,
+                                                "retry_after_s": outcome.retry_after_s},
                                f"Falha do runtime: {outcome.error}",
                                limitations=[f"runtime:{outcome.error}"])
         origin = origin_of(outcome)

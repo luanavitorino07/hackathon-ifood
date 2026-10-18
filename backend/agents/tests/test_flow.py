@@ -101,7 +101,8 @@ class FlowTest(unittest.TestCase):
 
     def test_catalog_lists_registered_agents(self):
         orch, *_ = make("x")
-        self.assertEqual([a["agent_id"] for a in orch.catalog()], ["researcher", "planner", "auditor"])
+        self.assertEqual([a["agent_id"] for a in orch.catalog()][:4],
+                         ["orchestrator", "researcher", "planner", "auditor"])
 
 
 def second_message(orch, ctx, text):
@@ -233,6 +234,42 @@ class ConstraintsTest(unittest.TestCase):
         orch, ctx, _, memory = make("Quero para 2 pessoas até R$ 100")
         memory.save_patch("sess_1", {"constraints": "lixo"}, 0, "test")
         self.assertEqual(orch.handle_message(ctx).session_status, "active")
+
+
+class FailureMessageTest(unittest.TestCase):
+    def run_with(self, error, detail):
+        orch, ctx, sink, _ = make("quero pizza", FakeRuntime(error=error, detail=detail))
+        out = orch.handle_message(ctx)
+        err = [e for e in sink.events if e["type"] == "error"][0]["payload"]
+        return out, err, sink
+
+    def test_auth_required_is_not_retryable_and_does_not_say_try_again_soon(self):
+        out, err, _ = self.run_with("unavailable", "auth_required")
+        self.assertEqual((err["code"], err["retryable"]), ("IFOOD_AUTH_REQUIRED", False))
+        self.assertIn("não vai resolver", out.reply_text)
+
+    def test_location_required(self):
+        out, err, _ = self.run_with("unavailable", "location_required")
+        self.assertEqual((err["code"], err["retryable"]), ("LOCATION_REQUIRED", False))
+        self.assertIn("localização", out.reply_text)
+
+    def test_invalid_query_asks_customer_to_rephrase(self):
+        out, err, _ = self.run_with("invalid_output", "invalid_query")
+        self.assertEqual((err["code"], out.session_status), ("SEARCH_QUERY_INVALID", "waiting_customer"))
+        self.assertIn("pizza margherita", out.reply_text)
+
+    def test_quota_mentions_wait_time(self):
+        out, err, _ = self.run_with("quota", "quota_exceeded")
+        self.assertEqual((err["code"], err["retryable"]), ("LLM_QUOTA", True))
+        self.assertIn("30 segundos", out.reply_text)
+
+    def test_unknown_detail_falls_back_to_error_kind(self):
+        out, err, _ = self.run_with("unavailable", "tool_not_called")
+        self.assertEqual((err["code"], err["retryable"], out.session_status), ("IFOOD_UNAVAILABLE", True, "active"))
+
+    def test_runtime_detail_never_leaks(self):
+        _, _, sink = self.run_with("unavailable", "segredo_interno_123")
+        self.assertNotIn("segredo_interno_123", str(sink.events))
 
 
 class CheaperTest(unittest.TestCase):

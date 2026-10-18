@@ -80,7 +80,10 @@ memória), follow-ups também contam como pedido.
 ## Eventos emitidos
 `agent_status`, `agent_message` (`request|proposal|review|resolution`), `tool_activity`
 (emitido após a chamada), `conflict_detected`, `decision_made`, `recommendations_ready`,
-`chat_message` (assistente), `error` (`LLM_QUOTA|LLM_TIMEOUT|LLM_INVALID_OUTPUT|LLM_UNAVAILABLE|AGENT_ERROR`).
+`chat_message` (assistente), `error` (códigos em `failures.py`: `IFOOD_AUTH_REQUIRED`, `LOCATION_REQUIRED`,
+`SEARCH_QUERY_INVALID`, `IFOOD_TOOL_UNAVAILABLE`, `IFOOD_UNAVAILABLE`, `LLM_QUOTA`, `LLM_TIMEOUT`,
+`LLM_INVALID_OUTPUT`, `AGENT_ERROR`). O `detail` do runtime só escolhe a mensagem ao cliente; nunca é
+copiado para eventos. `catalog()` inclui o `orchestrator`, que também emite `agent_status`.
 Payloads com chaves fechadas, validadas em `events.py` contra a seção 15.4 do PROMPT.md.
 Eventos de agentes: `visibility="admin"`; resposta ao cliente e recomendações: `"both"`.
 

@@ -27,16 +27,16 @@ class FakeRuntime:
     """Runtime simulado. `error` força falha; `offers` substitui o catálogo demo."""
 
     def __init__(self, offers: list[dict[str, Any]] | None = None, error: str | None = None,
-                 provider: str = "demo") -> None:
+                 provider: str = "demo", detail: str | None = "falha simulada") -> None:
         self.offers = DEMO_OFFERS if offers is None else offers
-        self.error, self.provider = error, provider
+        self.error, self.provider, self.detail = error, provider, detail
         self.calls: list[RuntimeCall] = []
 
     def run(self, call: RuntimeCall) -> RuntimeOutcome:
         self.calls.append(call)
         if self.error:
             return RuntimeOutcome(ok=False, error=self.error, retry_after_s=30,  # type: ignore[arg-type]
-                                  detail="falha simulada")
+                                  detail=self.detail)
         trace = ToolTrace("call_demo_1", "offer_search", self.provider,  # type: ignore[arg-type]
                           "succeeded", 12, f"{len(self.offers)} oferta(s) simulada(s)")
         return RuntimeOutcome(ok=True, structured={"offers": copy.deepcopy(self.offers)}, tool_calls=(trace,))
