@@ -4,6 +4,49 @@
 > (`3e558d8`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 > As seções anteriores foram preservadas abaixo como histórico.
 
+## PRIORIDADE — Agentes passam a usar IA de verdade (decisão do Gabriel, PR #14) (18/10/2026)
+
+**Decisão do Gabriel:** os agentes estavam quase só por regras (a IA só montava a busca). Agora cada
+especialista raciocina com IA e eles conversam de verdade. Regras ficam como guarda-corpo e reserva.
+
+| Agente | O que a IA faz | Guarda-corpo (código) |
+|---|---|---|
+| **Curador** (`curator`, novo) | julga se cada item do iFood é o que o cliente pediu | só itens da busca; sem IA → filtro por palavras |
+| **Memória do cliente** (`customer_memory`, novo) | responde aos outros agentes (histórico/preferências) | fatos com origem |
+| Estrategista | pergunta à Memória + estratégia (RAG); escolhe ordem e argumento | só opções aprovadas; argumento sem números |
+| Descontos | pergunta à Memória + política (RAG); decide sugerir/quanto | ≤ máximo da política; lucro no código; nunca aplica |
+| Orquestrador | escreve a resposta ao cliente | restaurante e total exatos, sem outros valores, com avisos |
+
+### → Lorenzo: o runtime precisa aceitar "chamada de raciocínio" (sem ferramentas)
+
+Hoje `OpenCodeAgentRuntime._execute` recusa qualquer `RuntimeCall` sem `offer_search`
+(`tool_not_allowed`) → os agentes caem na regra de reserva e **a IA não roda no modo real**.
+
+**Contrato (já usado pelos agentes; nada muda em `ports.py`):**
+- `RuntimeCall.allowed_tools == ()` e `max_tool_calls == 0` = **raciocínio sem ferramentas**.
+- Executar o prompt no OpenCode com **todas as ferramentas desligadas** (`tools: {"*": false}`, permissão
+  negando tudo), `system=call.system`, e saída estruturada `format: {"type": "json_schema", "schema":
+  call.output_schema}`; `timeout_s` respeitado (abortar ao estourar).
+- Devolver `RuntimeOutcome(ok=True, structured=<info.structured_output>, tool_calls=())`.
+  Se o modelo não produzir JSON válido → `ok=False, error="invalid_output"`; 429 → `quota`; etc. (mesmos erros).
+- **Não** passar por `SearchIntent`/`validate_query`/`onlyOpen` (não é busca) nem marcar `ifood_mcp`.
+- Sem PII: os prompts levam só pedido, prato, itens/preços da busca, fatos agregados do cliente.
+- Testes offline sugeridos: chamada sem ferramenta não chama `searchOffers`; JSON válido devolvido;
+  JSON inválido → `invalid_output`; 429 → `quota`.
+
+**Custo de cota:** ~4–5 chamadas de IA por pedido (curador, estrategista, descontos, resposta) + a busca.
+Com Gemini gratuito acaba rápido; serve para validar e depois trocar para Claude (item 6 das decisões).
+Retomada ("agora são 3 pessoas") reaproveita busca **e** julgamento do Curador (sem nova chamada a eles).
+
+### → Lorenzo: teste a atualizar
+`backend/api/tests/test_acceptance.py:124` conta 6 agentes; agora são **8** (`curator`, `customer_memory`).
+É a única falha da suíte API com o PR #14 (113/124 passam com `main`/`feat/integrations`).
+
+### Estado
+PR #14 aberto (`98c05c1`). Agentes 123 testes OK (13 novos: Curador rejeita esfiha/pastel, IA não cria item,
+reserva sem IA, desconto limitado à política, resposta com preço errado rejeitada, consultas à Memória).
+Demo offline (`python3 -m backend.agents.demo --roteiro --escritorio`) mostra a conversa com **IA SIMULADA**.
+
 ## Novo: memória do cliente na `main` (Claude, PRs #12 e #13 — `4275a17`, `6c26ed6`)
 
 - **`SQLiteCustomerMemory`** (porta `CustomerMemoryPort` em `backend/agents/ports.py`), em
