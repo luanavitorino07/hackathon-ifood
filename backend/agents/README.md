@@ -54,7 +54,8 @@ vai para o painel do gestor).
 
 ### `structured["offers"]` (esquema em `researcher.OFFER_SCHEMA`)
 Obrigatórios: `product_id, name, unit_price_cents` (inteiro, centavos), `merchant_id, merchant_name`.
-Opcionais: `tags, delivery_fee_cents, other_fees_cents, eta_minutes` (`null` = desconhecido).
+Opcionais: `tags, delivery_fee_cents, other_fees_cents, eta_minutes, is_open` (`null` = desconhecido).
+`is_open: false` exclui a oferta (restaurante fechado); o runtime deve mapear `merchant.isOpen` para ele.
 Monte a partir dos **resultados reais do MCP**, nunca do texto do modelo.
 
 ## Regras que o código assume
@@ -70,6 +71,14 @@ Monte a partir dos **resultados reais do MCP**, nunca do texto do modelo.
   Precedência, da menor para a maior: `initial_context` (só enquanto `constraints` ainda não existe
   na memória) < `constraints` persistidas < `session.constraints` < declaração explícita na mensagem.
   Depois da primeira mensagem o `initial_context` não é reaplicado, para não desfazer correções do cliente.
+
+## Relevância ao pedido (`relevance.py`)
+O orquestrador extrai os termos do prato ("marmita parmegiana") da mensagem, ou da memória (`search.terms`)
+em follow-ups como "agora são 3 pessoas". O pesquisador manda só esses termos para a busca; o planejador
+usa apenas ofertas cujo item ou restaurante correspondam (item vale mais que restaurante) e avisa quando
+não há o prato exato ("opção mais próxima"); sem nenhuma oferta aderente, pergunta ao cliente em vez de
+sugerir outra coisa. O auditor rejeita item sem relação com o pedido ou de restaurante fechado.
+Pedido genérico ("quero comida") não é filtrado.
 
 ## Conversa (`chat.py`)
 Classificação por regras, sem LLM. Só mensagens de **pedido** (comida, orçamento, pessoas) rodam

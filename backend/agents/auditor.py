@@ -6,6 +6,7 @@ from typing import Any
 from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, SessionContext, WorkingState,
                      filtered_mark, slug, soft_unverified, tag_requirements)
 from .registry import AgentContext, AgentDefinition
+from .relevance import score
 
 
 def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
@@ -23,6 +24,10 @@ def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
             issues.append(f"Preço de {it['product_id']} diverge da oferta pesquisada")
         elif offer.merchant_id != rec["merchant_id"]:
             issues.append(f"Item {it['product_id']} pertence a outro restaurante")
+        if offer is not None and offer.is_open is False:
+            issues.append(f"Restaurante de {it['product_id']} está fechado")
+        if offer is not None and st.query_terms and score(offer, st.query_terms) == 0:
+            issues.append(f"Item {it['product_id']} não corresponde ao pedido")
         if it["quantity"] <= 0:
             issues.append(f"Quantidade inválida em {it['product_id']}")
     subtotal = sum(i["quantity"] * i["unit_price_cents"] for i in items)

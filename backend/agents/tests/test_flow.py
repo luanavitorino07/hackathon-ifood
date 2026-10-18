@@ -390,6 +390,85 @@ class RagTest(unittest.TestCase):
         self.assertEqual(strat[0]["payload"]["sources"][0]["document_id"], "estrategias_venda_demo")
 
 
+def _offer(pid, name, price, merchant, mid, is_open=None):
+    return {"product_id": pid, "name": name, "unit_price_cents": price, "merchant_id": mid,
+            "merchant_name": merchant, "tags": [], "delivery_fee_cents": 0, "other_fees_cents": 0,
+            "eta_minutes": 30, "is_open": is_open}
+
+
+TORTA = _offer("t1", "2 Tortas", 1590, "Mcdonald's - São Carlos", "mc")
+MARMITA_FRANGO = _offer("m1", "Marmita - Frango à Milanesa", 1999, "Marmitaria Tio Genaro", "tg")
+MARMITA_PARME = _offer("m2", "Marmita Parmegiana de Carne", 2490, "Restaurante Bom Prato", "bp")
+PEDIDO = "quero marmita parmegiana pra 2 pessoas por 100 conto no maximo, busque melhor preço"
+
+
+class RelevanceTest(unittest.TestCase):
+    def ask(self, offers, text=PEDIDO):
+        runtime = FakeRuntime(offers=offers)
+        orch, ctx, sink, memory = make(text, runtime)
+        return orch.handle_message(ctx), runtime, sink, memory, orch, ctx
+
+    def test_cheap_unrelated_item_is_never_recommended(self):
+        out, *_ = self.ask([TORTA, MARMITA_FRANGO, MARMITA_PARME])
+        names = [i["name"] for r in out.recommendations for i in r["items"]]
+        self.assertTrue(names and all("Parmegiana" in n for n in names))
+        self.assertNotIn("Tortas", out.reply_text)
+
+    def test_closest_option_comes_with_warning(self):
+        out, *_ = self.ask([TORTA, MARMITA_FRANGO])
+        self.assertIn("Marmita - Frango", out.reply_text)
+        self.assertIn("Não encontrei exatamente 'parmegiana'", out.reply_text)
+
+    def test_nothing_relevant_asks_customer_instead_of_suggesting(self):
+        out, _, sink, *_ = self.ask([TORTA])
+        self.assertEqual((out.session_status, out.recommendations), ("waiting_customer", []))
+        self.assertIn('Não encontrei "marmita parmegiana"', out.reply_text)
+        self.assertNotIn("recommendations_ready", sink.types())
+
+    def test_search_prompt_carries_only_the_dish(self):
+        _, runtime, *_ = self.ask([MARMITA_PARME])
+        self.assertIn("Produto desejado: marmita parmegiana.", runtime.calls[0].prompt)
+
+    def test_dish_is_remembered_in_follow_up(self):
+        _, runtime, _, memory, orch, ctx = self.ask([TORTA, MARMITA_PARME])
+        self.assertEqual(memory.load("sess_1").state["search"]["terms"], ["marmita", "parmegiana"])
+        out = second_message(orch, ctx, "agora são 3 pessoas")
+        self.assertTrue(all("Parmegiana" in i["name"] for r in out.recommendations for i in r["items"]))
+
+    def test_new_dish_replaces_previous_one(self):
+        _, _, _, memory, orch, ctx = self.ask([TORTA, MARMITA_PARME])
+        second_message(orch, ctx, "na verdade quero pizza para 2 pessoas")
+        self.assertEqual(memory.load("sess_1").state["search"]["terms"], ["pizza"])
+
+    def test_generic_order_is_not_filtered(self):
+        out, *_ = self.ask([TORTA, MARMITA_FRANGO], text="quero comida para 1 pessoa até R$ 100")
+        self.assertTrue(out.recommendations)
+
+    def test_closed_restaurant_is_excluded(self):
+        closed = dict(MARMITA_PARME, is_open=False)
+        out, *_ = self.ask([closed, MARMITA_FRANGO])
+        self.assertNotIn("Bom Prato", out.reply_text)
+        self.assertIn("Marmita - Frango", out.reply_text)
+
+    def test_only_closed_matches_means_not_available(self):
+        out, *_ = self.ask([TORTA, dict(MARMITA_PARME, is_open=False)])
+        self.assertEqual(out.recommendations, [])
+        self.assertIn("disponível agora", out.reply_text)
+
+    def test_auditor_rejects_unrelated_and_closed_items(self):
+        from backend.agents.auditor import audit_recommendation
+        from backend.agents.researcher import parse_offers
+        offers, _ = parse_offers({"offers": [TORTA, dict(MARMITA_PARME, is_open=False)]})
+        st = WorkingState(Constraints(), offers=offers, data_origin="demo", query_terms=("marmita", "parmegiana"))
+        base = {"merchant_id": "mc", "subtotal_cents": 1590, "delivery_fee_cents": 0, "other_fees_cents": 0,
+                "discount_cents": 0, "total_cents": 1590, "data_origin": "demo", "warnings": []}
+        torta = dict(base, items=[{"product_id": "t1", "name": "2 Tortas", "quantity": 1, "unit_price_cents": 1590}])
+        self.assertIn("Item t1 não corresponde ao pedido", audit_recommendation(torta, st))
+        parme = dict(base, merchant_id="bp", subtotal_cents=2490, total_cents=2490,
+                     items=[{"product_id": "m2", "name": "Marmita Parmegiana", "quantity": 1, "unit_price_cents": 2490}])
+        self.assertTrue(any("fechado" in i for i in audit_recommendation(parme, st)))
+
+
 class FailureMessageTest(unittest.TestCase):
     def run_with(self, error, detail):
         orch, ctx, sink, _ = make("quero pizza", FakeRuntime(error=error, detail=detail))
