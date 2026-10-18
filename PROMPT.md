@@ -279,11 +279,13 @@ Tipos: `message_id`, `text`, `created_at`: `string`; `role`: `"customer" | "assi
   "product_id": "prd_1",
   "name": "Hambúrguer",
   "quantity": 2,
-  "unit_price_cents": 2990
+  "unit_price_cents": 2990,
+  "original_unit_price_cents": 3490,
+  "image_url": "https://exemplo.invalid/hamburguer.jpg"
 }
 ```
 
-Tipos: `product_id`, `name`: `string`; `quantity`: `integer > 0`; `unit_price_cents`: `integer >= 0`.
+Tipos: `product_id`, `name`: `string`; `quantity`: `integer > 0`; `unit_price_cents`: `integer >= 0`; `original_unit_price_cents`: `integer >= 0|null`, sempre maior ou igual ao preço atual; `image_url`: `string|null`. Preço original e imagem só são preenchidos quando vierem da fonte verificada.
 
 **`Recommendation`** — proposta estruturada para o chatbot e o gestor:
 
@@ -292,21 +294,25 @@ Tipos: `product_id`, `name`: `string`; `quantity`: `integer > 0`; `unit_price_ce
   "recommendation_id": "rec_1",
   "merchant_id": "rest_1",
   "merchant_name": "Restaurante Exemplo",
-  "items": [{"product_id":"prd_1","name":"Hambúrguer","quantity":2,"unit_price_cents":2990}],
+  "items": [{"product_id":"prd_1","name":"Hambúrguer","quantity":2,"unit_price_cents":2990,"original_unit_price_cents":3490,"image_url":"https://exemplo.invalid/hamburguer.jpg"}],
   "currency": "BRL",
   "subtotal_cents": 5980,
   "delivery_fee_cents": 500,
   "other_fees_cents": 0,
   "discount_cents": 0,
   "total_cents": 6480,
-  "eta_minutes": 35,
+  "eta_minutes": 40,
+  "eta_min_minutes": 30,
+  "distance_km": 2.4,
+  "merchant_rating": 4.7,
+  "is_open": true,
   "reasons": ["Dentro do orçamento"],
   "warnings": [],
   "data_origin": "ifood_mcp"
 }
 ```
 
-Tipos: `recommendation_id`, `merchant_id`, `merchant_name`: `string`; `items`: `CartItem[]`; `currency`: literal `"BRL"`; `subtotal_cents`, `delivery_fee_cents`, `other_fees_cents`, `total_cents`: `integer>=0|null`; `discount_cents`: `integer>=0`; `eta_minutes`: `integer>=0|null`; `reasons`, `warnings`: `string[]`; `data_origin`: `"ifood_mcp" | "demo"`. `total_cents` só é preenchido quando todos os valores necessários forem conhecidos, calculado como subtotal + entrega + outras taxas − descontos **efetivamente autorizados/aplicáveis**. Desconto apenas *sugerido* não entra no total.
+Tipos: `recommendation_id`, `merchant_id`, `merchant_name`: `string`; `items`: `CartItem[]`; `currency`: literal `"BRL"`; `subtotal_cents`, `delivery_fee_cents`, `other_fees_cents`, `total_cents`: `integer>=0|null`; `discount_cents`: `integer>=0`; `eta_min_minutes`, `eta_minutes`: `integer>=0|null` (limites mínimo e máximo da estimativa, com o mínimo nunca acima do máximo); `distance_km`: `number>=0|null`; `merchant_rating`: `number|null` entre 0 e 5; `is_open`: `boolean|null`; `reasons`, `warnings`: `string[]`; `data_origin`: `"ifood_mcp" | "demo"`. Distância, avaliação, abertura, imagem e faixa de entrega permanecem `null` quando a fonte não informar; não são inferidas pela IA. `total_cents` só é preenchido quando todos os valores necessários forem conhecidos, calculado como subtotal + entrega + outras taxas − descontos **efetivamente autorizados/aplicáveis**. Desconto apenas *sugerido* não entra no total.
 
 **`Cart`** — snapshot do carrinho:
 

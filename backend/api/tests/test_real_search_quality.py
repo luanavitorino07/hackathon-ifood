@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import unicodedata
 
 import httpx
 import pytest
@@ -41,6 +42,7 @@ def item(name, product, merchant, price):
 class MockSearchClient:
     def __init__(self, query, items):
         self.query, self.items, self.calls = query, items, []
+        self.reasoning_calls = []
 
     async def list_tool_ids(self):
         return ["ifood_searchOffers"]
@@ -52,6 +54,46 @@ class MockSearchClient:
         pass
 
     async def run_prompt(self, session_id, **kwargs):
+        if not kwargs.get("tools", {}).get("ifood_searchOffers", False):
+            self.reasoning_calls.append(kwargs)
+            if "Curador" in kwargs.get("system", ""):
+                match = re.search(r"ITENS_JSON:\s*(.*)", kwargs["prompt"])
+                items = json.loads(match.group(1)) if match else []
+
+                def plain(value):
+                    return (
+                        unicodedata.normalize("NFKD", value.lower())
+                        .encode("ascii", "ignore")
+                        .decode()
+                    )
+
+                query = plain(self.query)
+                judged = []
+                for candidate in items:
+                    name = plain(candidate["item"])
+                    is_pizza_impostor = "pizza" in query and (
+                        "pastel" in name or "esfiha" in name
+                    )
+                    matches = query in name and not is_pizza_impostor
+                    judged.append(
+                        {
+                            "product_id": candidate["product_id"],
+                            "fit": "sim" if matches else "nao",
+                            "reason": (
+                                "corresponde ao prato" if matches else "é outro tipo de prato"
+                            ),
+                        }
+                    )
+                structured = {"items": judged}
+            else:
+                structured = None
+            return OpenCodeRunResult(
+                session_id=session_id,
+                message_id="mock_reasoning",
+                structured_output=structured,
+                raw_response={"parts": []},
+            )
+
         self.calls.append(kwargs)
         location = json.loads(re.search(r"userLocation=(\{.*?\})", kwargs["prompt"])[1])
         return OpenCodeRunResult(
@@ -232,6 +274,114 @@ def test_http_can_show_closed_restaurant_as_unavailable_local_test_option():
 
     asyncio.run(scenario())
     assert "refinements.onlyOpen=false" in mock.calls[0]["prompt"]
+
+
+def test_curator_rejects_pastel_de_pizza_from_pizza_results():
+    mock = MockSearchClient(
+        "pizza",
+        [
+            item("Pizza Margherita", "pizza", "pizzaria", 35),
+            item("Pastel de Pizza", "pastel", "pastelaria", 12),
+        ],
+    )
+    runtime = OpenCodeAgentRuntime(
+        OpenCodeSettings(),
+        sandbox_location=SandboxLocation(-23.55, -46.63),
+        client_factory=lambda: mock,
+    )
+    app = build_application(runtime=runtime, runtime_mode="real")
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://test"
+        ) as client:
+            session_id = (
+                await client.post("/api/v1/sessions", json={"client_id": None})
+            ).json()["session_id"]
+            sent = await client.post(
+                "/api/v1/chat/messages",
+                json={
+                    "session_id": session_id,
+                    "client_message_id": "pizza_not_pastel",
+                    "text": "Quero pizza para uma pessoa até R$ 50",
+                    "input_mode": "text",
+                    "transcription_id": None,
+                },
+            )
+            assert sent.status_code == 202
+            snapshot = (await client.get(f"/api/v1/sessions/{session_id}/snapshot")).json()
+            products = {
+                product["product_id"]
+                for recommendation in snapshot["recommendations"]
+                for product in recommendation["items"]
+            }
+            assert products == {"pizza"}
+
+    asyncio.run(scenario())
+    assert len(mock.calls) == 1
+    assert any("Curador" in call.get("system", "") for call in mock.reasoning_calls)
+
+
+def test_http_preserves_verified_delivery_and_catalog_details():
+    detailed = item("Pizza Margherita", "pizza", "pizzaria", 39.9)
+    detailed.update(
+        {
+            "promotionalUnitPrice": 34.9,
+            "imageUrl": "https://images.example/pizza.jpg",
+        }
+    )
+    detailed["merchant"].update(
+        {
+            "isOpen": True,
+            "distanceKm": 2.4,
+            "rating": 4.7,
+            "deliveryMethod": {
+                "fee": 5,
+                "estimatedMinutes": {"min": 25, "max": 40},
+            },
+        }
+    )
+    mock = MockSearchClient("pizza", [detailed])
+    runtime = OpenCodeAgentRuntime(
+        OpenCodeSettings(),
+        sandbox_location=SandboxLocation(-23.55, -46.63),
+        client_factory=lambda: mock,
+    )
+    app = build_application(runtime=runtime, runtime_mode="real")
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://test"
+        ) as client:
+            session_id = (
+                await client.post("/api/v1/sessions", json={"client_id": None})
+            ).json()["session_id"]
+            await client.post(
+                "/api/v1/chat/messages",
+                json={
+                    "session_id": session_id,
+                    "client_message_id": "verified_details",
+                    "text": "Quero pizza para uma pessoa até R$ 50",
+                    "input_mode": "text",
+                    "transcription_id": None,
+                },
+            )
+            recommendation = (
+                await client.get(f"/api/v1/sessions/{session_id}/snapshot")
+            ).json()["recommendations"][0]
+            assert recommendation["eta_min_minutes"] == 25
+            assert recommendation["eta_minutes"] == 40
+            assert recommendation["distance_km"] == 2.4
+            assert recommendation["merchant_rating"] == 4.7
+            assert recommendation["is_open"] is True
+            assert DISTANCE_UNKNOWN not in recommendation["warnings"]
+            assert recommendation["items"][0]["unit_price_cents"] == 3490
+            assert recommendation["items"][0]["original_unit_price_cents"] == 3990
+            assert recommendation["items"][0]["image_url"] == (
+                "https://images.example/pizza.jpg"
+            )
+
+    asyncio.run(scenario())
 
 
 def test_query_substitution_is_rejected_without_automatic_retry():

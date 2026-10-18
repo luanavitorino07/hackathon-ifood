@@ -71,15 +71,25 @@ class OpenCodeClient:
             raise InvalidOutputError("resposta de saúde inválida do OpenCode")
         return OpenCodeHealth(healthy=True, version=version)
 
-    async def create_session(self, *, title: str | None = None) -> str:
+    async def create_session(
+        self,
+        *,
+        title: str | None = None,
+        allow_search: bool = True,
+    ) -> str:
         body: dict[str, Any] = {}
         if title:
             body["title"] = title
         # This client is deliberately read-only: MCP tools beyond search are denied.
-        body["permission"] = [
-            {"permission": "*", "pattern": "*", "action": "deny"},
-            {"permission": self.settings.search_tool_id, "pattern": "*", "action": "allow"},
-        ]
+        body["permission"] = [{"permission": "*", "pattern": "*", "action": "deny"}]
+        if allow_search:
+            body["permission"].append(
+                {
+                    "permission": self.settings.search_tool_id,
+                    "pattern": "*",
+                    "action": "allow",
+                }
+            )
         data = await self._request_json("POST", "/session", json=body)
         session_id = data.get("id")
         if not isinstance(session_id, str) or not session_id:
@@ -136,7 +146,8 @@ class OpenCodeClient:
         # OpenCode may return only the final assistant message; tool calls live
         # in intermediate messages sharing the same user-message parent.
         parent_id = info.get("parentID")
-        if isinstance(parent_id, str) and tools is not None:
+        tools_enabled = tools is not None and any(tools.values())
+        if isinstance(parent_id, str) and tools_enabled:
             messages = await self._request_json("GET", f"/session/{session_id}/message")
             if not isinstance(messages, list):
                 raise InvalidOutputError("histórico de execução inválido do OpenCode")

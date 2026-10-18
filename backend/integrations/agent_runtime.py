@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from importlib import import_module
+from math import isfinite
 from time import monotonic
 from typing import Any, Literal, Protocol
 
@@ -53,7 +54,12 @@ class _RuntimeCallLike(Protocol):
 class _OpenCodePort(Protocol):
     async def list_tool_ids(self) -> list[str]: ...
 
-    async def create_session(self, *, title: str | None = None) -> str: ...
+    async def create_session(
+        self,
+        *,
+        title: str | None = None,
+        allow_search: bool = True,
+    ) -> str: ...
 
     async def run_prompt(
         self,
@@ -129,6 +135,14 @@ class OpenCodeAgentRuntime:
     ) -> list[str]:
         return self._evidence.recommendation_warnings(session_id, merchant_id, product_ids)
 
+    def recommendation_details(
+        self,
+        session_id: str,
+        merchant_id: str,
+        product_ids: Sequence[str],
+    ) -> dict[str, Any]:
+        return self._evidence.recommendation_details(session_id, merchant_id, product_ids)
+
     def run(self, call: _RuntimeCallLike) -> Any:
         """Executa a chamada síncrona exigida por ``AgentRuntimePort``."""
 
@@ -155,6 +169,8 @@ class OpenCodeAgentRuntime:
         )
 
     async def _execute(self, call: _RuntimeCallLike) -> _ExecutionResult:
+        if not call.allowed_tools and call.max_tool_calls == 0:
+            return await self._execute_reasoning(call)
         if _LOGICAL_TOOL not in call.allowed_tools:
             return _failure("invalid_output", "tool_not_allowed")
         if call.max_tool_calls < 1:
@@ -265,6 +281,44 @@ class OpenCodeAgentRuntime:
         finally:
             await client.aclose()
 
+    async def _execute_reasoning(self, call: _RuntimeCallLike) -> _ExecutionResult:
+        """Executa raciocínio estruturado dos agentes sem liberar nenhuma ferramenta."""
+
+        client = self._client_factory()
+        session_id = None
+        try:
+            session_id = await client.create_session(
+                title=f"{call.agent_id}:{call.task_id}"[:120],
+                allow_search=False,
+            )
+            response = await client.run_prompt(
+                session_id,
+                system=call.system,
+                prompt=call.prompt,
+                tools={"*": False},
+                output_schema=call.output_schema,
+                timeout_seconds=call.timeout_s,
+            )
+            if not isinstance(response.structured_output, Mapping):
+                raise InvalidOutputError("invalid_model_output", retryable=False)
+            return _ExecutionResult(
+                ok=True,
+                structured=dict(response.structured_output),
+                traces=(),
+            )
+        except IntegrationError as exc:
+            if session_id is not None and isinstance(exc, RuntimeTimeoutError):
+                try:
+                    await client.abort_session(session_id)
+                except Exception:
+                    pass
+            retry_after = 30 if isinstance(exc, QuotaError) else None
+            return _failure(exc.code, _safe_detail(exc), retry_after_s=retry_after)
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+            return _failure("invalid_output", "invalid_model_output")
+        finally:
+            await client.aclose()
+
 
 def _failure(
     error: str,
@@ -284,6 +338,7 @@ def _safe_detail(exc: IntegrationError) -> str:
     allowed = {
         "auth_required",
         "invalid_mcp_response",
+        "invalid_model_output",
         "invalid_query",
         "location_required",
         "mcp_error",
@@ -567,26 +622,54 @@ def _map_offers(
             price = raw.get("promotionalUnitPrice")
             if price is None:
                 price = raw["unitPrice"]
+            effective_price_cents = _brl_to_cents(price)
+            original_price_cents = _brl_to_cents(raw["unitPrice"])
             fee = delivery.get("promotionalFee")
             if fee is None:
                 fee = delivery.get("fee")
             estimate = delivery.get("estimatedMinutes")
             eta = None
+            eta_min = None
             if isinstance(estimate, Mapping):
+                eta_min = _non_negative_int(estimate.get("min"))
                 eta = _non_negative_int(estimate.get("max"))
                 if eta is None:
-                    eta = _non_negative_int(estimate.get("min"))
+                    eta = eta_min
+                elif eta_min is not None and eta_min > eta:
+                    eta_min = None
+            distance_km = _optional_decimal(
+                merchant.get("distanceKm", raw.get("distanceKm")),
+                minimum=0,
+            )
+            merchant_rating = _optional_decimal(merchant.get("rating"), minimum=0, maximum=5)
+            image_url = raw.get("imageUrl")
+            if not isinstance(image_url, str) or not image_url.startswith(("http://", "https://")):
+                image_url = None
             offers.append(
                 {
                     "product_id": _required_text(raw, "itemId"),
                     "name": _required_text(raw, "itemName"),
-                    "unit_price_cents": _brl_to_cents(price),
+                    "unit_price_cents": effective_price_cents,
+                    "original_unit_price_cents": (
+                        original_price_cents
+                        if original_price_cents > effective_price_cents
+                        else None
+                    ),
+                    "image_url": image_url,
                     "merchant_id": _required_text(merchant, "merchantId"),
                     "merchant_name": _required_text(merchant, "merchantName"),
                     "tags": [CLOSED_TEST_TAG] if closed_for_testing else [],
                     "delivery_fee_cents": None if fee is None else _brl_to_cents(fee),
                     "other_fees_cents": None,
                     "eta_minutes": eta,
+                    "eta_min_minutes": eta_min,
+                    "distance_km": distance_km,
+                    "merchant_rating": merchant_rating,
+                    "_merchant_is_open": (
+                        merchant["isOpen"]
+                        if isinstance(merchant.get("isOpen"), bool)
+                        else None
+                    ),
                     **(
                         {"is_open": merchant["isOpen"]}
                         if isinstance(merchant.get("isOpen"), bool) and not closed_for_testing
@@ -631,6 +714,25 @@ def _non_negative_int(value: Any) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return None
     return value
+
+
+def _optional_decimal(
+    value: Any,
+    *,
+    minimum: float,
+    maximum: float | None = None,
+) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str, Decimal)):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(parsed) or parsed < minimum or (
+        maximum is not None and parsed > maximum
+    ):
+        return None
+    return parsed
 
 
 def _tool_duration_ms(part: Mapping[str, Any]) -> int | None:

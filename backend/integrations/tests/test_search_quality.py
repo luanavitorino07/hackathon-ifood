@@ -46,7 +46,7 @@ def test_arbitrary_food_is_not_limited_to_a_fixed_menu(dish):
     assert not intent.matches("Pizza margherita")
 
 
-def test_specific_dish_is_not_replaced_by_same_protein():
+def test_specific_query_is_protected_but_items_reach_curator():
     intent = SearchIntent.from_prompt(
         "Pedido do cliente: Quero parmegiana de frango\nProduto desejado: parmegiana frango."
     )
@@ -61,18 +61,17 @@ def test_specific_dish_is_not_replaced_by_same_protein():
         ],
         intent,
     )
-    assert [o["product_id"] for o in selected] == ["p3"]
-    assert selected[0]["unit_price_cents"] == 3290
-    assert dropped == 2
+    assert [o["product_id"] for o in selected] == ["p1", "p2", "p3"]
+    assert dropped == 0
 
 
-def test_no_matches_stays_empty_instead_of_showing_whole_catalog():
+def test_name_mismatch_is_not_discarded_before_curator():
     selected, dropped = select_matching_offers(
         [offer("Strogonoff de frango")],
         SearchIntent.from_prompt("Produto desejado: parmegiana frango."),
     )
-    assert selected == []
-    assert dropped == 1
+    assert [offer["name"] for offer in selected] == ["Strogonoff de frango"]
+    assert dropped == 0
 
 
 def test_generic_request_can_compare_multiple_merchants():
@@ -133,6 +132,46 @@ def test_store_does_not_share_evidence_between_sessions_and_expires():
     store.record("b", [offer("Pizza")], public_location=False, customization=False)
     assert len(store._sessions) == 1
     assert "a" not in store._sessions
+
+
+def test_store_exposes_only_verified_offer_details_and_expires_them():
+    clock = [0.0]
+    store = SearchEvidenceStore(clock=lambda: clock[0], ttl_seconds=10)
+    detailed = {
+        **offer("Pizza", price=2990),
+        "original_unit_price_cents": 3490,
+        "image_url": "https://images.example/pizza.jpg",
+        "eta_min_minutes": 25,
+        "distance_km": 1.7,
+        "merchant_rating": 4.8,
+        "_merchant_is_open": True,
+    }
+    store.record("s", [detailed], public_location=False, customization=False)
+
+    assert store.recommendation_details("s", "m1", ["p1"]) == {
+        "eta_min_minutes": 25,
+        "distance_km": 1.7,
+        "merchant_rating": 4.8,
+        "is_open": True,
+        "items": {
+            "p1": {
+                "original_unit_price_cents": 3490,
+                "image_url": "https://images.example/pizza.jpg",
+            }
+        },
+    }
+    notes = store.recommendation_warnings("s", "m1", ["p1"])
+    assert DISTANCE_UNKNOWN not in notes
+    assert "Distância informada pelo iFood: 1.7 km." in notes
+
+    clock[0] = 11
+    assert store.recommendation_details("s", "m1", ["p1"]) == {
+        "eta_min_minutes": None,
+        "distance_km": None,
+        "merchant_rating": None,
+        "is_open": None,
+        "items": {},
+    }
 
 
 def test_empty_query_rejected():

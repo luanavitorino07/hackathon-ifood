@@ -52,11 +52,22 @@ def test_actual_sanitized_mcp_fixture_preserves_promotion_and_unknown_fees():
     )
     offers = _map_offers(payload)
     assert offers[0]["unit_price_cents"] == 6850
+    assert offers[0]["original_unit_price_cents"] is None
+    assert offers[0]["eta_min_minutes"] == 38
     assert offers[0]["eta_minutes"] == 48
     assert offers[1]["unit_price_cents"] == 4499
+    assert offers[1]["original_unit_price_cents"] == 5499
     assert offers[1]["delivery_fee_cents"] == 0
+    assert offers[1]["eta_min_minutes"] == 28
     assert offers[1]["eta_minutes"] == 38
-    assert all(offer["other_fees_cents"] is None and offer["tags"] == [] for offer in offers)
+    assert all(
+        offer["other_fees_cents"] is None
+        and offer["tags"] == []
+        and offer["distance_km"] is None
+        and offer["merchant_rating"] is None
+        and offer["image_url"] is None
+        for offer in offers
+    )
 
 
 def test_intermediate_tool_results_are_joined_only_for_current_user_message():
@@ -112,6 +123,62 @@ def test_intermediate_tool_results_are_joined_only_for_current_user_message():
         {"permission": "ifood_searchOffers", "pattern": "*", "action": "allow"},
     ]
     assert json.loads(requests[1].content)["variant"] == "low"
+
+
+def test_reasoning_session_denies_every_tool_permission():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"id": "session_1"})
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            base_url="http://oc.test", transport=httpx.MockTransport(handler)
+        ) as http:
+            await OpenCodeClient(OpenCodeSettings(), client=http).create_session(
+                title="curator:test",
+                allow_search=False,
+            )
+
+    asyncio.run(scenario())
+    assert json.loads(requests[0].content)["permission"] == [
+        {"permission": "*", "pattern": "*", "action": "deny"}
+    ]
+
+
+def test_reasoning_prompt_does_not_fetch_tool_history():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        assert request.method == "POST"
+        return httpx.Response(
+            200,
+            json={
+                "info": {
+                    "id": "answer",
+                    "parentID": "user_1",
+                    "structured_output": {"items": []},
+                },
+                "parts": [],
+            },
+        )
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            base_url="http://oc.test", transport=httpx.MockTransport(handler)
+        ) as http:
+            result = await OpenCodeClient(OpenCodeSettings(), client=http).run_prompt(
+                "session_1",
+                prompt="julgue os itens",
+                tools={"*": False},
+                output_schema={"type": "object"},
+            )
+            assert result.structured_output == {"items": []}
+
+    asyncio.run(scenario())
+    assert len(requests) == 1
 
 
 @pytest.mark.parametrize("status,exception", [(429, QuotaError), (404, UnavailableError)])

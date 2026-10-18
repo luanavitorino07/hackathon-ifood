@@ -185,6 +185,9 @@ class StateEventSink:
             "agent_event_binding", default=None
         )
         self.catalog_warning_lookup: Callable[[str, str, list[str]], list[str]] | None = None
+        self.catalog_detail_lookup: (
+            Callable[[str, str, list[str]], dict[str, Any]] | None
+        ) = None
         self._catalog_notes: ContextVar[tuple[str, ...]] = ContextVar("catalog_notes", default=())
 
     @contextmanager
@@ -212,19 +215,38 @@ class StateEventSink:
         if binding is None:
             raise RuntimeError("StateEventSink precisa estar vinculado a uma mensagem")
         if type == "recommendations_ready" and self.catalog_warning_lookup is not None:
-            # Enriquece apenas warnings do contrato v1; não muda preços nem o payload dos agentes.
+            # Enriquece apenas com evidência verificada da mesma busca; não aceita dados da IA.
             recommendations = []
             customer_notes = []
             for recommendation in payload["recommendations"]:
+                product_ids = [item["product_id"] for item in recommendation["items"]]
                 notes = self.catalog_warning_lookup(
                     session_id,
                     recommendation["merchant_id"],
-                    [item["product_id"] for item in recommendation["items"]],
+                    product_ids,
                 )
+                details = (
+                    self.catalog_detail_lookup(
+                        session_id,
+                        recommendation["merchant_id"],
+                        product_ids,
+                    )
+                    if self.catalog_detail_lookup is not None
+                    else {}
+                )
+                item_details = details.get("items", {})
                 customer_notes.extend(notes)
                 recommendations.append(
                     {
                         **recommendation,
+                        "items": [
+                            {**item, **item_details.get(item["product_id"], {})}
+                            for item in recommendation["items"]
+                        ],
+                        "eta_min_minutes": details.get("eta_min_minutes"),
+                        "distance_km": details.get("distance_km"),
+                        "merchant_rating": details.get("merchant_rating"),
+                        "is_open": details.get("is_open"),
                         "warnings": list(dict.fromkeys(recommendation["warnings"] + notes)),
                     }
                 )

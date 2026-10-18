@@ -29,19 +29,17 @@ uv run --python 3.12 pytest backend/api/tests backend/integrations/tests backend
 ```
 
 O teste real continua desabilitado, salvo `RUN_LIVE_IFOOD=1` explícito. Os testes
-offline cobrem conversa, seis agentes, preferência por pizza, orçamento/restrições,
+offline cobrem conversa, oito agentes, preferência por pizza, orçamento/restrições,
 contexto compartilhado e isolamento de eventos HTTP/SSE entre comprador e gestor.
 
 ## Qualidade e limites da busca
 
-O runtime real protege a especificidade do pedido com uma guarda lexical: a query
-e os nomes dos itens devem manter os termos de `Produto desejado:` que o pesquisador
-envia. Não há outra extração de prato por stopwords na integração. Sem essa linha,
-não há termos obrigatórios; a classificação e a limpeza pertencem aos agentes.
-Não há lista fechada de pratos. Retorno de strogonoff não é promovido a parmegiana
-de frango; se nada corresponder, a lista fica vazia, sem pesquisa extra automática.
-Isso é conservador: sinônimos não normalizados, descrições incompletas e consultas
-complexas precisam de alinhamento da intenção estruturada com o pesquisador.
+O runtime real protege a especificidade do pedido com uma guarda lexical na query:
+ela deve manter os termos de `Produto desejado:` que o pesquisador envia. Os itens
+retornados não são descartados antecipadamente só pelo nome. O Curador julga a
+relevância sem ferramentas — por exemplo, pizza não deve virar pastel de pizza — e,
+se a IA estiver indisponível, o filtro lexical dos agentes continua como reserva.
+Não há lista fechada de pratos nem pesquisa extra automática.
 
 As ofertas compatíveis são deduplicadas por produto/loja e distribuídas entre os
 restaurantes retornados. Não são inventadas outras lojas nem ampliadas permissões
@@ -62,8 +60,12 @@ explicitamente que a loja está fechada, que a opção serve somente para teste 
 não está disponível para pedido. A API também bloqueia uma eventual tentativa de
 submeter essa recomendação. O modo normal continua excluindo lojas fechadas.
 
-Avisos de entrega ainda não garantida, distância, ingredientes, alterações e preço
-dos complementos não confirmados são preservados em `Recommendation.warnings`.
+Cada recomendação expõe a faixa de entrega (`eta_min_minutes`/`eta_minutes`) e,
+quando presentes no retorno verificado, distância, avaliação, abertura da loja,
+imagem do item e preço original da promoção. Campos ausentes ficam `null`: a IA não
+inventa esses dados. Avisos de entrega ainda não garantida, distância, ingredientes,
+alterações e preço dos complementos não confirmados são preservados em
+`Recommendation.warnings`.
 O chat acrescenta só uma frase curta de confirmação, sem repetir todos os avisos.
 Uma busca com coordenadas públicas não confirma entrega no endereço do usuário.
 Não foram criados campos HTTP de modificadores nem novas ferramentas MCP.
@@ -252,7 +254,7 @@ controle de revisão, mas perde os dados ao reiniciar.
 
 ## Aceite e pendências
 
-`tests/test_acceptance.py` verifica catálogo de seis agentes, pedido de quatro
+`tests/test_acceptance.py` verifica catálogo de oito agentes, pedido de quatro
 pessoas por R$ 115,60, validação e propagação do contexto, modos, isolamento do
 comprador/gestor e SSE sobre HTTP local.
 
