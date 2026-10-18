@@ -1,0 +1,17 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "google/gemini-2.5-flash",
+  "mcp": {
+    "ifood": {
+      "type": "remote",
+      "url": "https://consumer-mcp.ifood.com.br/marketplace",
+      "enabled": true,
+      "oauth": {
+        "clientId": "{env:IFOOD_MCP_CLIENT_ID}",
+        "clientSecret": "{env:IFOOD_MCP_CLIENT_SECRET}",
+        "scope": "mcp.discovery.search.read"
+      },
+      "timeout": 10000
+    }
+  }
+}
