@@ -3,6 +3,143 @@
 > Leia antes de continuar. Este arquivo resume o estado da `main` após o merge do PR #2
 > (`b6b7dbe`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 
+## Resposta Codex à revisão do Claude — 18/10/2026
+
+- Corrigido o bloqueante: `SearchIntent` lê `Produto desejado:` como fonte dos
+  termos; não extrai mais palavras da conversa com outra lista de stopwords.
+  Sem a linha do produto, não exige termos. Detecção de personalização continua
+  separada, com compatibilidade para retirar ingrediente do nome base antes do PR #8.
+- Adicionados testes das quatro frases apontadas, pedido genérico e compatibilidade
+  de ingrediente a retirar, incluindo testes ponta a ponta HTTP/agentes/runtime
+  simulado. O pedido "tem algo mais barato?" após expiração usa o prato lembrado.
+- Integrado o commit existente `b6fe31c` do Claude (PR #8), sem editar os arquivos
+  dele: retomada e evidências agora usam **5 minutos**, e personalização não vira
+  termo obrigatório do prato. O PR #9 leva esse alinhamento junto à entrega;
+  a revisão original abaixo foi preservada como histórico.
+- Avisos completos ficam em `Recommendation.warnings`; o chat tem só uma frase
+  curta sobre confirmação de preço/disponibilidade/personalização. Sem alterar
+  layout ou contrato HTTP.
+- Este PR publica a entrega e este relatório na main conforme autorização do
+  Lorenzo. A conclusão depende do merge confirmado no GitHub, não só do push.
+- Resultado final após atender a revisão: **229 testes aprovados, 1 teste real
+  opt-in pulado, nenhuma falha nem xfail**. Lint aprovado nos arquivos próprios
+  alterados. Nenhuma chamada adicional ao Gemini ou iFood nesta revisão.
+
+## Entrega Codex — qualidade da busca e catálogo — 18/10/2026
+
+Lorenzo autorizou integrar esta entrega e este relatório na `main` via PR. A
+implementação inicial foi feita sobre `8a89ee2`; o pull integrou `main@c78e6f9`,
+com a retomada do Claude. Código validado em `1366793`: **217 testes aprovados,
+1 teste real opt-in pulado, nenhuma falha nem xfail**. A publicação deve ser
+confirmada pelo estado do PR; não confundir push na feature com merge na `main`.
+
+**Claude/Gabriel:** depois do merge, atualizar a partir da `main` e reiniciar a API.
+Testar especificidade do prato, só lojas abertas, diversidade e preço unitário;
+quantidade e orçamento devem reaproveitar a pesquisa. Ingredientes/adicionais
+continuam não confirmados: não apresentar personalização como implementada.
+Todos os relatórios futuros também devem chegar a este arquivo na `main`,
+preservando os recados anteriores e mantendo código em PR revisado.
+
+### Diagnóstico inicial na base anterior (histórico; ver atualização abaixo)
+
+- OpenCode local `1.19.3`: `/global/health` saudável e `/mcp` anuncia `ifood: connected`.
+- Consulta independente SOMENTE `initialize`/`tools/list` ao endpoint oficial com o
+  token já salvo pelo OpenCode recebeu **HTTP 401** antes de obter o catálogo.
+  Isso não prova que o OpenCode falhará após eventual refresh automático, mas o
+  status conectado sozinho NÃO comprova autorização atual. Revalidar/renovar OAuth
+  antes do teste real. Nenhum segredo foi impresso; não houve `tools/call` nem Gemini.
+- Reprodução offline no código dos agentes: `classify("Quero parmegiana")` retorna
+  `vague`; `DemoCatalogRuntime` pode devolver o catálogo inteiro para esse pedido.
+  `"Quero parmegiana de frango"` é classificado `order`, mas o demo devolve
+  **PF de Frango Grelhado**, por casar a palavra frango. Não são ofertas reais iFood.
+- No runtime real, a query antes era validada somente como texto não vazio, sem
+  proteger o prato específico; o retorno também não tinha guarda de correspondência.
+
+### Alterações locais do Codex (API / integrations)
+
+- `search_quality.py`: guarda lexical sem cardápio/allowlist de pratos. Usa a
+  linha `Produto desejado:` enviada pelo pesquisador, normaliza acentos
+  e algumas grafias equivalentes, exige termos específicos na query e nos nomes
+  retornados. Parmegiana de frango não aceita strogonoff/frango genérico como equivalente.
+- Prompt do runtime explicita os termos obrigatórios e proíbe substituições e
+  afirmações não comprovadas. Query incompatível vira `invalid_query`; não há nova
+  chamada ou tentativa automática. Retorno sem itens compatíveis fica vazio, não
+  se transforma em lista de comidas alternativas apresentada como correspondência.
+- Deduplicação por `(merchant_id, product_id)` e distribuição alternada de ofertas
+  entre os restaurantes realmente retornados. Não cria lojas nem garante variedade
+  se a ferramenta trouxer só uma. Mantida uma chamada com `pageSize=20` e filtro
+  oficial `onlyOpen=true`, ambos confirmados no schema. Não foram inventadas ferramentas.
+- Preservados preço unitário/promocional e frete do retorno MCP em centavos. O
+  contrato v1 já tem `items[].unit_price_cents`; nenhum campo público novo foi criado.
+- Avisos conservadores completos vão em `Recommendation.warnings`:
+  abertura filtrada pelo iFood no momento da consulta (entrega não garantida), distância desconhecida, personalização/ingredientes
+  não verificados e preço base sem adicionais não comprovados. Fallback público
+  também deixa explícito que não confirma entrega no endereço do comprador.
+  O chat acrescenta só uma frase curta de confirmação, sem repetir os detalhes.
+- Avisos usam evidências mínimas efêmeras, isoladas por sessão e produto/loja,
+  limitadas a 256 sessões/250 itens por sessão e validade de 5 minutos. Não guardam
+  prompt, endereço, token ou payload bruto; não são cache de ofertas nem corrigem
+  a retomada dos agentes. Evidência ausente/vencida pede revalidação.
+- Coordenadas explícitas inválidas não caem silenciosamente no fallback. Uma
+  cidade textual diferente de São Carlos/SP não usa automaticamente o preset de
+  São Carlos; retorna localização necessária. Não há geocodificação implementada.
+- O modelo também não pode adicionar `itemRestrictions` quando não foi solicitado.
+
+### Encaminhamentos e limitações (atualizados após o pull)
+
+- As correções de relevância/classificação e retomada do Claude foram recebidas
+  pelos PRs #6/#7. O diagnóstico do demo acima refere-se à base anterior. Permanecem
+  necessários alinhamento de intenção estruturada e cobertura de pratos/sinônimos
+  complexos; não ampliar o catálogo fictício fingindo que veio do iFood. Nenhum
+  arquivo de agentes/memória foi editado pelo Codex; só recebido pelo pull.
+- Correspondência lexical é conservadora, NÃO é compreensão semântica: sinônimos
+  não normalizados, ingredientes ausentes do nome, múltiplas alternativas e pedidos
+  complexos podem ser rejeitados mesmo havendo oferta válida. Precisamos alinhar
+  intenção estruturada com o pesquisador; não anunciar solução geral de relevância.
+- **Codex / MCP:** OAuth reconectado e schema de busca obtido. Ainda falta confirmar
+  suporte a consulta detalhada de cardápio/complementos. As ferramentas desta conta
+  são searchOffers/listVouchers/setVoucher;
+  somente searchOffers é permitida no runtime. Não presumir que APIs merchant de
+  catálogo dão permissão de consulta pelo MCP consumer. Não habilitar carrinho,
+  voucher, pedido, pagamento ou tool adivinhada para obter complementos.
+- Ingredientes/adicionais com preços e escolhas obrigatórias AINDA NÃO disponíveis:
+  o schema de detalhes e as ferramentas necessárias precisam ser confirmados.
+  `merchant.isOpen` foi confirmado e mapeado; não foram inventados campos de opções.
+- O DTO v1 de item não representa grupos/opções de personalização. Propor contrato
+  interno e eventual extensão/versionamento com a equipe antes de expor modificadores
+  estruturados. Por enquanto comunicar que o preço é base e a mudança não está confirmada.
+- Lojas abertas são tratadas pelo filtro oficial e pela exclusão de `isOpen=false`.
+  Isso não confirma cobertura do endereço, distância ou disponibilidade futura;
+  preserva-se o aviso para revalidar antes da compra.
+
+### Validação local
+
+- Suíte completa offline após o pull: **217 aprovados, 1 teste real opt-in pulado,
+  nenhuma falha e nenhum xfail**. Nenhuma chamada Gemini.
+- Inclui fluxo HTTP com OpenCode/MCP simulados, prato específico, ausência de
+  substituição, dois restaurantes, preços, avisos no chat/snapshot/histórico,
+  isolamento de sessão, TTL, cidades incompatíveis e filtros não solicitados.
+- Arquivos: `backend/integrations/{agent_runtime,search_quality}.py`,
+  `backend/api/{main,services}.py`, testes correspondentes e README da API.
+  Diagnóstico `tools/list` preparado em `.local/inspect_ifood_tools.py` (ignorado).
+- Evidências históricas de buscas reais não foram alteradas. Abertura foi também
+  verificada diretamente no MCP (abaixo), mas o fluxo API/Gemini desta versão ainda
+  não foi reexecutado ao vivo; não confundir as duas validações.
+
+### Atualização após reconexão OAuth e pull da main
+
+- O diagnóstico OAuth do próprio OpenCode confirmou token antigo expirado e conseguiu reconectar. Depois disso, `initialize`/`tools/list` autenticados responderam com sucesso. Não foi necessário chamar Gemini, fazer busca real ou trocar credenciais.
+- Schema oficial de entrada salvo, sem credenciais, em `backend/integrations/tests/fixtures/ifood_search_input_schema.json`: `refinements.onlyOpen: boolean` filtra lojas abertas; `pageSize` padrão 10 e máximo 25. Também existem filtros de distância e ordenação, mas esta entrega não afirma ter medido distância nem cobertura real.
+- O runtime agora exige `onlyOpen=true` na chamada efetivamente registrada, além de pedir no prompt. Falta do campo, falso, string ou número são rejeitados; só avisar não bastava. A consulta pede 20 resultados em uma única chamada.
+- Defesa adicional: `_map_offers` descarta `merchant.isOpen === false`, mesmo que a busca filtrada retorne a loja. Quando o campo é booleano verdadeiro, repassa `is_open=True` no contrato interno combinado pelo Claude; ausente/não booleano não vira prova de abertura. Retorno com todas as lojas fechadas vira lista vazia, não catálogo inventado ou erro de formato.
+- O aviso da recomendação distingue o filtro aplicado naquele momento de entrega/estoque confirmados. Abertura e preços precisam de revalidação antes de comprar, principalmente após retomada.
+- Pull preserva integralmente as mudanças do Claude em agentes: relevância, `is_open` e retomada incremental (PRs #6/#7). Não houve edição própria em `backend/agents/**` ou `backend/memory/**`.
+- Retirada a marca `xfail(strict=True)` das duas variantes HTTP de retomada na API, conforme pedido do Claude: devem passar normalmente com memória efêmera e SQLite.
+- Acrescentado aceite HTTP com orçamento e quantidade alterados em sequência nas duas memórias, verificando uma única pesquisa total, quantidades e totais recalculados. Resultado final: **217 passed, 1 skipped**, com lint aprovado nos arquivos Python alterados.
+- **Validação real somente leitura, sem Gemini:** exatamente uma chamada direta a `searchOffers` para `parmegiana de frango`, São Carlos/SP público, `pageSize=20`, `onlyOpen=true`. MCP respondeu sem erro, com **20 resultados, 20 `merchant.isOpen=true`, 0 fechados e 0 status desconhecidos**. O filtro foi aceito no ambiente real. Sem carrinho, pedido, pagamento ou voucher.
+- Os exemplos iniciais dessa resposta ainda incluíram comidas diferentes (ex.: esfiha/nuggets), mesmo com a query específica: o filtro de abertura não corrige relevância do catálogo. A guarda local não promove esses itens a parmegiana. A amostra não comprova que exista parmegiana disponível, nem valida o fluxo completo com Gemini. Não foi feita segunda busca automática.
+- A guarda textual do runtime continua conservadora e pode rejeitar sinônimos/descrições incompletas; precisa de alinhamento futuro com `query_terms` dos agentes. Personalização detalhada ainda depende de ferramentas e contrato: `tools/list` desta conta só expõe searchOffers/listVouchers/setVoucher. A consulta do schema não confirma horários reais de restaurantes nem funcionamento de uma busca com Gemini.
+
 ## Revisão do Claude em `feat/integrations@1366793` — corrigir antes do merge (18/10/2026)
 
 Revisado só leitura. **Aprovado:** `onlyOpen` instruído e validado, `merchant.isOpen` → `is_open` e

@@ -16,7 +16,7 @@ from importlib import import_module
 from time import monotonic
 from typing import Any, Literal, Protocol
 
-from .config import OpenCodeSettings, SandboxLocation
+from .config import SAO_CARLOS_TEST_COORDINATES, OpenCodeSettings, SandboxLocation
 from .errors import (
     IntegrationError,
     InvalidOutputError,
@@ -25,6 +25,12 @@ from .errors import (
     UnavailableError,
 )
 from .opencode_client import OpenCodeClient, OpenCodeRunResult
+from .search_quality import (
+    SearchEvidenceStore,
+    SearchIntent,
+    normalized_text,
+    select_matching_offers,
+)
 
 _LOGICAL_TOOL = "offer_search"
 _MCP_TOOL_SUFFIX = "searchoffers"
@@ -105,10 +111,20 @@ class OpenCodeAgentRuntime:
         *,
         sandbox_location: SandboxLocation | None = None,
         client_factory: Callable[[], _OpenCodePort] | None = None,
+        evidence_store: SearchEvidenceStore | None = None,
     ) -> None:
         self._settings = settings
         self._sandbox_location = sandbox_location
         self._client_factory = client_factory or (lambda: OpenCodeClient(settings))
+        self._evidence = evidence_store or SearchEvidenceStore()
+
+    def recommendation_warnings(
+        self,
+        session_id: str,
+        merchant_id: str,
+        product_ids: Sequence[str],
+    ) -> list[str]:
+        return self._evidence.recommendation_warnings(session_id, merchant_id, product_ids)
 
     def run(self, call: _RuntimeCallLike) -> Any:
         """Executa a chamada síncrona exigida por ``AgentRuntimePort``."""
@@ -141,6 +157,10 @@ class OpenCodeAgentRuntime:
         if call.max_tool_calls < 1:
             return _failure("invalid_output", "tool_call_limit")
 
+        try:
+            intent = SearchIntent.from_prompt(call.prompt)
+        except InvalidOutputError:
+            return _failure("invalid_output", "invalid_query")
         resolved_location = _resolve_location(call.context, self._sandbox_location)
         if resolved_location is None:
             return _failure("unavailable", "location_required")
@@ -168,21 +188,37 @@ class OpenCodeAgentRuntime:
             )
             payload = _tool_payload(part)
             _raise_mcp_error(payload)
-            _validate_tool_input(part, location=location, dietary=dietary)
-            offers = _map_offers(payload)
+            _validate_tool_input(part, location=location, dietary=dietary, only_open=True)
+            intent.validate_query(part["state"]["input"]["query"])
+            offers, mismatches = select_matching_offers(_map_offers(payload), intent)
             duration_ms = _tool_duration_ms(part)
             if duration_ms is None:
                 duration_ms = max(0, round((monotonic() - started_at) * 1000))
             call_id = part.get("callID") or part.get("id")
             if not isinstance(call_id, str) or not call_id:
                 raise InvalidOutputError("missing_call_id")
+            self._evidence.record(
+                call.session_id,
+                offers,
+                public_location=resolved_location.source == "public_test",
+                customization=intent.customization_requested,
+                only_open=True,
+            )
             trace = _TraceData(
                 call_id=call_id,
                 tool_name=_LOGICAL_TOOL,
                 provider="ifood_mcp",
                 status="succeeded",
                 duration_ms=duration_ms,
-                summary=_trace_summary(len(offers), resolved_location.source),
+                summary=(
+                    _trace_summary(len(offers), resolved_location.source)
+                    + " Filtro oficial onlyOpen aplicado na consulta."
+                    + (
+                        f" {mismatches} item(ns) sem correspondência textual descartado(s)."
+                        if mismatches
+                        else ""
+                    )
+                ),
             )
             return _ExecutionResult(
                 ok=True,
@@ -261,7 +297,17 @@ def _resolve_location(
                 {"latitude": float(latitude), "longitude": float(longitude)},
                 "context",
             )
+        return None  # Coordenadas explícitas inválidas não viram outra cidade silenciosamente.
     if fallback is not None:
+        if (
+            fallback.source == "public_test"
+            and (fallback.latitude, fallback.longitude) == SAO_CARLOS_TEST_COORDINATES
+            and isinstance(raw, str)
+            and raw.strip()
+            and normalized_text(raw).strip().replace(",", "")
+            not in {"sao carlos", "sao carlos sp", "sao carlos sao paulo"}
+        ):
+            return None
         return _ResolvedLocation(
             {"latitude": fallback.latitude, "longitude": fallback.longitude},
             fallback.source,
@@ -315,6 +361,7 @@ def _build_search_prompt(
     location: Mapping[str, float],
     dietary: Sequence[str],
 ) -> str:
+    required_terms = sorted(SearchIntent.from_prompt(agent_prompt).terms)
     dietary_instruction = (
         f"Use refinements.itemRestrictions={json.dumps(list(dietary))}. "
         if dietary
@@ -325,8 +372,16 @@ def _build_search_prompt(
         "Busque itens (resultKind ITEM), nunca merchants. Use exatamente "
         f"userLocation={json.dumps(dict(location), ensure_ascii=False)}. "
         f"{dietary_instruction}"
+        "Use refinements.onlyOpen=true para retornar apenas lojas abertas agora. "
         "Não use localização inferida e não chame outras tools. "
-        "Use pageSize=5 e merchantType=RESTAURANT. "
+        "A query deve preservar o prato e qualificadores explícitos do pedido: "
+        "não reduza um prato específico ao ingrediente, não substitua por similares "
+        "e não use uma lista fixa de comidas. Preserve pedidos de personalização "
+        "como pedidos ainda não confirmados; não invente ingredientes ou adicionais. "
+        "Não afirme que uma loja está aberta, próxima ou personaliza sem evidência. "
+        "Termos obrigatórios da query (grafias equivalentes são aceitas): "
+        f"{json.dumps(required_terms)}. "
+        "Use pageSize=20 (máximo oficial 25) e merchantType=RESTAURANT. "
         "Depois da ferramenta, responda somente OK. Pedido:\n"
         f"{agent_prompt}"
     )
@@ -365,6 +420,7 @@ def _validate_tool_input(
     *,
     location: Mapping[str, float],
     dietary: Sequence[str],
+    only_open: bool = False,
 ) -> None:
     state = part.get("state")
     if not isinstance(state, Mapping):
@@ -386,12 +442,20 @@ def _validate_tool_input(
             raise InvalidOutputError("invalid_mcp_response")
         if float(actual) != location[coordinate]:
             raise InvalidOutputError("invalid_mcp_response")
+    if only_open:
+        refinements = tool_input.get("refinements")
+        if not isinstance(refinements, Mapping) or refinements.get("onlyOpen") is not True:
+            raise InvalidOutputError("invalid_mcp_response")
     if dietary:
         refinements = tool_input.get("refinements")
         if not isinstance(refinements, Mapping):
             raise InvalidOutputError("invalid_mcp_response")
         actual_dietary = refinements.get("itemRestrictions")
         if not isinstance(actual_dietary, list) or sorted(actual_dietary) != list(dietary):
+            raise InvalidOutputError("invalid_mcp_response")
+    else:
+        refinements = tool_input.get("refinements")
+        if isinstance(refinements, Mapping) and refinements.get("itemRestrictions"):
             raise InvalidOutputError("invalid_mcp_response")
 
 
@@ -453,11 +517,15 @@ def _map_offers(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(raw_results, list):
         raise InvalidOutputError("invalid_mcp_response")
     offers: list[dict[str, Any]] = []
+    closed_filtered = 0
     for raw in raw_results:
         if not isinstance(raw, Mapping):
             continue
         try:
             merchant = _required_mapping(raw, "merchant")
+            if merchant.get("isOpen") is False:
+                closed_filtered += 1
+                continue
             delivery = _required_mapping(merchant, "deliveryMethod")
             price = raw.get("promotionalUnitPrice")
             if price is None:
@@ -482,11 +550,16 @@ def _map_offers(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
                     "delivery_fee_cents": None if fee is None else _brl_to_cents(fee),
                     "other_fees_cents": None,
                     "eta_minutes": eta,
+                    **(
+                        {"is_open": merchant["isOpen"]}
+                        if isinstance(merchant.get("isOpen"), bool)
+                        else {}
+                    ),
                 }
             )
         except (InvalidOutputError, KeyError, TypeError, ValueError):
             continue
-    if raw_results and not offers:
+    if raw_results and not offers and not closed_filtered:
         raise InvalidOutputError("invalid_mcp_response")
     return offers
 

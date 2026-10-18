@@ -88,9 +88,6 @@ def test_failed_execution_is_not_repeated_by_http_replay(memory):
     asyncio.run(scenario())
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Claude: reidratar candidatos no orquestrador; SQLite não basta"
-)
 def test_related_followup_should_reuse_existing_candidates(memory):
     runtime = FakeRuntime()
     app = build_application(runtime=runtime, memory=memory)
@@ -109,5 +106,36 @@ def test_related_followup_should_reuse_existing_candidates(memory):
                 )
             ).status_code == 202
             assert len(runtime.calls) == 1
+
+    asyncio.run(scenario())
+
+
+def test_budget_then_quantity_followup_reuses_one_search(memory):
+    runtime = FakeRuntime()
+    app = build_application(runtime=runtime, memory=memory)
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://test"
+        ) as client:
+            sid = (await client.post("/api/v1/sessions", json={"client_id": None})).json()[
+                "session_id"
+            ]
+            steps = [
+                ("first", "Quero comida para 2 pessoas até R$ 100", 2, 10000),
+                ("budget", "Até R$ 80", 2, 8000),
+                ("quantity", "Agora são 3 pessoas até R$ 120", 3, 12000),
+            ]
+            for message_id, text, quantity, budget in steps:
+                accepted = await client.post(
+                    "/api/v1/chat/messages", json=message(sid, message_id, text)
+                )
+                assert accepted.status_code == 202
+                assert len(runtime.calls) == 1
+                snapshot = (await client.get(f"/api/v1/sessions/{sid}/snapshot")).json()
+                assert snapshot["recommendations"]
+                for rec in snapshot["recommendations"]:
+                    assert sum(i["quantity"] for i in rec["items"]) == quantity
+                    assert rec["total_cents"] <= budget
 
     asyncio.run(scenario())

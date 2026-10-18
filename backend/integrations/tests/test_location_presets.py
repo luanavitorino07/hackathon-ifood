@@ -67,3 +67,19 @@ def test_local_launcher_stays_demo_without_real_option():
     configure_local_environment(real=False)
     assert os.environ["APP_RUNTIME_MODE"] == "demo"
     assert SandboxLocation.from_env() is None
+
+
+def test_other_city_is_not_silently_searched_in_sao_carlos():
+    from backend.integrations.agent_runtime import _resolve_location
+
+    fallback = SandboxLocation(*SAO_CARLOS_TEST_COORDINATES, source="public_test")
+    assert _resolve_location({"location": "São Paulo, SP"}, fallback) is None
+    assert _resolve_location({"location": "São Carlos, SC"}, fallback) is None
+    assert _resolve_location({"location": "São Carlos, SP"}, fallback).source == "public_test"
+
+
+def test_invalid_explicit_coordinates_do_not_fall_back_to_other_location():
+    from backend.integrations.agent_runtime import _resolve_location
+
+    fallback = SandboxLocation(*SAO_CARLOS_TEST_COORDINATES, source="public_test")
+    assert _resolve_location({"location": {"latitude": 999, "longitude": 0}}, fallback) is None

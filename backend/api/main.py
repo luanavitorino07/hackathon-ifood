@@ -66,6 +66,9 @@ def build_application(
             memory=memory,
             state=backend_state,
         )
+    catalog_lookup = getattr(agent_runtime, "recommendation_warnings", None)
+    if callable(catalog_lookup):
+        services.event_sink.catalog_warning_lookup = catalog_lookup
     application = create_app(
         state=backend_state,
         message_dispatcher=services.dispatcher,
