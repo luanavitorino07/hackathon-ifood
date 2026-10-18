@@ -19,7 +19,7 @@ import {
   Icon,
 } from "../components/Brand";
 import { AgentGraph } from "../components/AgentGraph";
-import { styles as s, colors, money } from "../theme";
+import { styles as s, colors, money, agentStatusLabel, relativeTime, sessionStatusLabel } from "../theme";
 
 import type {
   AdminOverviewResponse,
@@ -221,11 +221,11 @@ export function OfficeScreen({ tab }: { tab: OfficeTab }) {
           const exists = nextOverview.recent_sessions.some(
             (session) => session.session_id === current,
           );
-
+          // Abrir a página cria atendimentos vazios; prefira o mais recente com atividade.
+          const active = nextOverview.recent_sessions.find((session) => session.last_seq > 2);
           return current && exists
             ? current
-            : nextOverview.recent_sessions[0]?.session_id ??
-                null;
+            : active?.session_id ?? nextOverview.recent_sessions[0]?.session_id ?? null;
         });
 
         setSelectedAgent((current) => {
@@ -344,7 +344,9 @@ export function OfficeScreen({ tab }: { tab: OfficeTab }) {
 
       const status = !agent.enabled
         ? "Indisponível"
-        : state?.status ?? "Sem atividade";
+        : state
+          ? agentStatusLabel[state.status] ?? state.status
+          : "Sem atividade";
 
       const dotColor = !agent.enabled
         ? "#CCCCCC"
@@ -408,7 +410,9 @@ export function OfficeScreen({ tab }: { tab: OfficeTab }) {
     return visibleConflicts.map((event) => (
       <Card key={event.payload.conflict_id}>
         <Text style={s.muted}>
-          Atendimento {event.session_id}
+          {overview?.recent_sessions.find((r) => r.session_id === event.session_id)?.client_alias ?? "Atendimento"}
+          {" · "}
+          {relativeTime(event.occurred_at)}
         </Text>
 
         <View style={local.conflictContent}>
@@ -488,7 +492,9 @@ export function OfficeScreen({ tab }: { tab: OfficeTab }) {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ gap: 10 }}
       >
-        {overview?.recent_sessions.map((session) => (
+        {overview?.recent_sessions
+          .filter((session) => session.last_seq > 1 || session.session_id === sessionId)
+          .map((session) => (
           <Pressable
             key={session.session_id}
             accessibilityRole="button"
@@ -501,10 +507,12 @@ export function OfficeScreen({ tab }: { tab: OfficeTab }) {
                 local.selectedCard,
             ]}
           >
-            <Text style={s.muted}>
-              {session.client_alias}
+            <Text style={[s.muted, { fontSize: 14 }]}>
+              <Text style={{ fontFamily: "InterSemiBold", color: colors.ink }}>{session.client_alias}</Text>
               {" · "}
-              {session.session_id}
+              {relativeTime(session.updated_at)}
+              {" · "}
+              {sessionStatusLabel[session.status] ?? session.status}
             </Text>
           </Pressable>
         ))}
@@ -528,14 +536,10 @@ export function OfficeScreen({ tab }: { tab: OfficeTab }) {
       ]}
     >
       <View style={{ gap: 8 }}>
-        <Text style={s.title}>Olá, Ifood!</Text>
+        <Text style={s.title}>{tab === "Painel de Agentes" ? "Painel de Agentes" : tab === "Conflitos" ? "Conflitos" : "Dashboard"}</Text>
 
         {tab === "Conflitos" && (
           <>
-            <Text style={s.heading}>
-              Central de Conflitos
-            </Text>
-
             <Text style={s.muted}>
               Acompanhe divergências entre os agentes
               deste atendimento.
@@ -565,8 +569,13 @@ export function OfficeScreen({ tab }: { tab: OfficeTab }) {
             />
 
             <Metric
-              label="Receita"
-              value={money(metrics?.revenue_cents)}
+              label="Recomendações feitas"
+              value={metrics?.recommendations_made ?? "—"}
+            />
+
+            <Metric
+              label="Mensagens recebidas"
+              value={metrics?.messages_received ?? "—"}
             />
 
             <Metric
@@ -593,7 +602,7 @@ export function OfficeScreen({ tab }: { tab: OfficeTab }) {
               <Text
                 style={[s.muted, { color: colors.red }]}
               >
-                Conflitos abertos da sessão
+                Conflitos abertos no atendimento
               </Text>
             </View>
           </View>

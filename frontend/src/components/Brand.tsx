@@ -21,15 +21,37 @@ import { faMicrophone } from "@fortawesome/free-solid-svg-icons/faMicrophone";
 import { faPaperPlane } from "@fortawesome/free-solid-svg-icons/faPaperPlane";
 import { faArrowLeft } from "@fortawesome/free-solid-svg-icons/faArrowLeft";
 import { faEllipsisVertical } from "@fortawesome/free-solid-svg-icons/faEllipsisVertical";
+import { faChartLine } from "@fortawesome/free-solid-svg-icons/faChartLine";
+import { faSackDollar } from "@fortawesome/free-solid-svg-icons/faSackDollar";
+import { faBolt } from "@fortawesome/free-solid-svg-icons/faBolt";
+import { faUsers } from "@fortawesome/free-solid-svg-icons/faUsers";
+import { faTriangleExclamation } from "@fortawesome/free-solid-svg-icons/faTriangleExclamation";
+import { faTrophy } from "@fortawesome/free-solid-svg-icons/faTrophy";
+import { faClock } from "@fortawesome/free-solid-svg-icons/faClock";
+import { faPlus } from "@fortawesome/free-solid-svg-icons/faPlus";
+import { faStore } from "@fortawesome/free-solid-svg-icons/faStore";
+import { faBrain } from "@fortawesome/free-solid-svg-icons/faBrain";
+import { faFilter } from "@fortawesome/free-solid-svg-icons/faFilter";
+import { faStar } from "@fortawesome/free-solid-svg-icons/faStar";
+import { faLocationDot } from "@fortawesome/free-solid-svg-icons/faLocationDot";
+import { faBriefcase } from "@fortawesome/free-solid-svg-icons/faBriefcase";
+import { faComments } from "@fortawesome/free-solid-svg-icons/faComments";
+import { faUtensils } from "@fortawesome/free-solid-svg-icons/faUtensils";
+import { faCircleCheck } from "@fortawesome/free-solid-svg-icons/faCircleCheck";
+import { faCommentDots } from "@fortawesome/free-solid-svg-icons/faCommentDots";
 
 // Para trocar o ícone de um agente, altere este mapa.
 export const agentIcons: Record<string, IconDefinition> = {
   orchestrator: faSitemap,
+  interpreter: faCommentDots,
   researcher: faMagnifyingGlass,
+  curator: faFilter,
   planner: faFileLines,
   strategist: faChessKnight,
+  sales_strategist: faChessKnight,
   discount_specialist: faTag,
   auditor: faClipboardCheck,
+  customer_memory: faBrain,
 };
 
 const interfaceIcons: Record<string, IconDefinition> = {
@@ -44,6 +66,22 @@ const interfaceIcons: Record<string, IconDefinition> = {
   back: faArrowLeft,
   more: faEllipsisVertical,
   agent: faRobot,
+  chart: faChartLine,
+  money: faSackDollar,
+  bolt: faBolt,
+  users: faUsers,
+  warning: faTriangleExclamation,
+  trophy: faTrophy,
+  clock: faClock,
+  plus: faPlus,
+  store: faStore,
+  brain: faBrain,
+  star: faStar,
+  location: faLocationDot,
+  ceo: faBriefcase,
+  comments: faComments,
+  food: faUtensils,
+  ok: faCircleCheck,
 };
 
 export const getAgentIcon = (id: string): IconDefinition =>
