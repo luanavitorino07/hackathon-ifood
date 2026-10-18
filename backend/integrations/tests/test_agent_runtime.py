@@ -491,3 +491,70 @@ def test_runtime_implements_the_published_agent_port() -> None:
     assert isinstance(outcome, ports.RuntimeOutcome)
     assert isinstance(outcome.tool_calls[0], ports.ToolTrace)
     assert outcome.tool_calls[0].provider == "ifood_mcp"
+
+
+class _GroceryOpenCode(_FakeOpenCode):
+    """Simula o modelo chamando searchOffers no vertical de mercado (e, opcionalmente, numa loja)."""
+
+    def __init__(self, payload: dict, merchant_type: str, merchant_id: str | None = None) -> None:
+        super().__init__(payload)
+        self.merchant_type, self.merchant_id = merchant_type, merchant_id
+
+    async def run_prompt(self, session_id: str, **kwargs) -> OpenCodeRunResult:
+        result = await super().run_prompt(session_id, **kwargs)
+        tool_input = result.raw_response["parts"][0]["state"]["input"]
+        tool_input["query"] = "arroz"
+        tool_input["merchantType"] = self.merchant_type
+        if self.merchant_id:
+            tool_input["refinements"]["merchantId"] = self.merchant_id
+        return result
+
+
+_STORE = "17f4a005-8c29-402b-9d1c-21fd76de786a"
+_GROCERY_PAYLOAD = {
+    "resultKind": "ITEM",
+    "results": [{"itemId": "item_arroz", "itemName": "Arroz Branco 5kg", "unitPrice": 28.9,
+                 "merchant": {"merchantId": _STORE, "merchantName": "Mercado Teste",
+                              "deliveryMethod": {"fee": 7.99}}}],
+}
+
+
+def _grocery_call(**context):
+    call = _call(**context)
+    call.prompt = "Pedido do cliente: mercado: arroz\nProduto desejado: arroz. Use somente estes termos."
+    return call
+
+
+def test_runtime_searches_groceries_inside_a_store_when_agents_ask() -> None:
+    client = _GroceryOpenCode(_GROCERY_PAYLOAD, "GROCERIES", _STORE)
+    runtime = OpenCodeAgentRuntime(OpenCodeSettings(), sandbox_location=SandboxLocation(-23.55, -46.63),
+                                   client_factory=lambda: client)
+
+    result = asyncio.run(runtime._execute(_grocery_call(merchant_type="GROCERIES", merchant_id=_STORE)))
+
+    assert result.ok is True
+    assert result.structured["offers"][0]["merchant_id"] == _STORE
+    assert "merchantType=GROCERIES" in client.prompt_kwargs["prompt"]
+    assert f'refinements.merchantId="{_STORE}"' in client.prompt_kwargs["prompt"]
+
+
+def test_runtime_rejects_search_in_wrong_vertical() -> None:
+    client = _GroceryOpenCode(_GROCERY_PAYLOAD, "RESTAURANT")
+    runtime = OpenCodeAgentRuntime(OpenCodeSettings(), sandbox_location=SandboxLocation(-23.55, -46.63),
+                                   client_factory=lambda: client)
+
+    result = asyncio.run(runtime._execute(_grocery_call(merchant_type="GROCERIES")))
+
+    assert result.ok is False
+    assert result.error == "invalid_output"
+
+
+def test_runtime_ignores_unknown_vertical_and_malformed_store() -> None:
+    client = _FakeOpenCode({"resultKind": "ITEM", "results": []})
+    runtime = OpenCodeAgentRuntime(OpenCodeSettings(), sandbox_location=SandboxLocation(-23.55, -46.63),
+                                   client_factory=lambda: client)
+
+    asyncio.run(runtime._execute(_call(merchant_type="DRUGSTORE", merchant_id="nao-e-uuid")))
+
+    assert "merchantType=RESTAURANT" in client.prompt_kwargs["prompt"]
+    assert "merchantId" not in client.prompt_kwargs["prompt"]

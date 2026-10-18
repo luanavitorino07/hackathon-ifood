@@ -121,7 +121,7 @@ def test_demo_http_acceptance_and_shared_context(main, monkeypatch):
             admin = {"X-Demo-Role": "admin"}
             catalog = await c.get("/api/v1/agents", headers=admin)
             assert catalog.status_code == 200
-            assert len(catalog.json()["agents"]) == 8
+            assert len(catalog.json()["agents"]) == 10
             history = (
                 await c.get(f"/api/v1/sessions/{sid}/history?limit=200", headers=admin)
             ).json()

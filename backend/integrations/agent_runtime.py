@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -188,6 +189,7 @@ class OpenCodeAgentRuntime:
             return _failure("unavailable", "location_required")
         location = resolved_location.coordinates
         dietary = _read_dietary_filters(call.context)
+        merchant_type, merchant_id = _read_scope(call.context)
         client = self._client_factory()
         started_at = monotonic()
         session_id = None
@@ -205,6 +207,8 @@ class OpenCodeAgentRuntime:
                     location,
                     dietary,
                     only_open=not self._include_closed_for_testing,
+                    merchant_type=merchant_type,
+                    merchant_id=merchant_id,
                 ),
                 tools=enabled_tools,
                 timeout_seconds=call.timeout_s,
@@ -217,7 +221,8 @@ class OpenCodeAgentRuntime:
             payload = _tool_payload(part)
             _raise_mcp_error(payload)
             only_open = not self._include_closed_for_testing
-            _validate_tool_input(part, location=location, dietary=dietary, only_open=only_open)
+            _validate_tool_input(part, location=location, dietary=dietary, only_open=only_open,
+                                 merchant_type=merchant_type, merchant_id=merchant_id)
             intent.validate_query(part["state"]["input"]["query"])
             offers, mismatches = select_matching_offers(
                 _map_offers(
@@ -440,12 +445,26 @@ def _compact(value: str) -> str:
     return "".join(character for character in value.lower() if character.isalnum())
 
 
+_MERCHANT_TYPES = {"RESTAURANT", "GROCERIES"}
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def _read_scope(context: Mapping[str, Any]) -> tuple[str, str | None]:
+    """Vertical (padrão RESTAURANT) e loja opcional pedidos pelos agentes; valores fora da lista são ignorados."""
+    kind = context.get("merchant_type")
+    merchant = context.get("merchant_id")
+    return (kind if kind in _MERCHANT_TYPES else "RESTAURANT",
+            merchant if isinstance(merchant, str) and _UUID.match(merchant) else None)
+
+
 def _build_search_prompt(
     agent_prompt: str,
     location: Mapping[str, float],
     dietary: Sequence[str],
     *,
     only_open: bool = True,
+    merchant_type: str = "RESTAURANT",
+    merchant_id: str | None = None,
 ) -> str:
     required_terms = sorted(SearchIntent.from_prompt(agent_prompt).terms)
     dietary_instruction = (
@@ -454,8 +473,10 @@ def _build_search_prompt(
         else "Não envie refinements.itemRestrictions. "
     )
     return (
-        "Uma chamada searchOffers: resultKind=ITEM, merchantType=RESTAURANT, "
+        f"Uma chamada searchOffers: resultKind=ITEM, merchantType={merchant_type}, "
         "pageSize=20, refinements.sort=RELEVANCE. Use exatamente "
+        + (f"refinements.merchantId={json.dumps(merchant_id)}. " if merchant_id else "")
+        + 
         f"userLocation={json.dumps(dict(location), ensure_ascii=False)}. "
         f"{dietary_instruction}"
         f"Use refinements.onlyOpen={'true' if only_open else 'false'}. "
@@ -501,6 +522,8 @@ def _validate_tool_input(
     location: Mapping[str, float],
     dietary: Sequence[str],
     only_open: bool | None = None,
+    merchant_type: str = "RESTAURANT",
+    merchant_id: str | None = None,
 ) -> None:
     state = part.get("state")
     if not isinstance(state, Mapping):
@@ -511,7 +534,9 @@ def _validate_tool_input(
     query = tool_input.get("query")
     if not isinstance(query, str) or not query.strip():
         raise InvalidOutputError("invalid_query")
-    if tool_input.get("resultKind") != "ITEM":
+    if tool_input.get("resultKind") != "ITEM" or tool_input.get("merchantType", "RESTAURANT") != merchant_type:
+        raise InvalidOutputError("invalid_mcp_response")
+    if merchant_id is not None and (tool_input.get("refinements") or {}).get("merchantId") != merchant_id:
         raise InvalidOutputError("invalid_mcp_response")
     actual_location = tool_input.get("userLocation")
     if not isinstance(actual_location, Mapping):

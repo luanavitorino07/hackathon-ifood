@@ -207,7 +207,7 @@ class WorkingState:
     ai_quantity: dict[str, int] = field(default_factory=dict)  # product_id -> unidades (IA, pelo tamanho pedido)
     preferred_merchant_id: str | None = None  # mercado da cesta agendada (preferido na compra do dia)
     schedule: Any = None  # grocery.ScheduleRequest pedido pelo cliente
-    schedule_plan: dict[str, Any] | None = None  # agendamento validado pelo Agendador
+    schedule_plan: dict[str, Any] | None = None  # agendamento validado (scheduler.plan_schedule)
     now: Any = None  # datetime UTC da mensagem (relógio do orquestrador)
     reply_prefix: str | None = None  # abertura da resposta (ex.: compra agendada que chegou)
 

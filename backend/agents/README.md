@@ -159,8 +159,9 @@ memória), follow-ups também contam como pedido.
    orçamento; avisa os itens que faltam. Sem IA: correspondência por palavras, com aviso.
 4. **Auditor** (`audit_basket`): produto veio da busca, preço igual, mesmo mercado, é de um item da lista, não
    repetido, aprovado pelo Montador, restrições com prova ou aviso, totais e orçamento.
-5. **Agendador** (`scheduler`): horário com 30 min a 4 meses de folga; a cesta sai com "Agendo para ...".
-   O agendamento fica **pendente** até o cliente confirmar ("fechado"); aí vira `active`.
+5. **Agendamento** (`scheduler.plan_schedule`, regra do orquestrador, não é agente): horário com 30 min a 4
+   meses de folga; a cesta sai com "Agendo para ...". Fica **pendente** até o cliente confirmar ("fechado");
+   aí vira `active`.
 6. Na data, `orch.due_schedules(now)` lista os vencidos e `orch.run_schedule(id)` refaz a cesta **com os preços
    do dia**, de preferência no mesmo mercado, e pergunta ao cliente no atendimento de origem. Recorrente avança
    para a próxima data (datas perdidas são puladas); único vira `done`. **Nunca compra sozinho**: o MCP liberado

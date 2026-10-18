@@ -11,7 +11,6 @@ from .planner import Planner
 from .ports import AgentRuntimePort, CustomerMemoryPort, EventSink, KnowledgePort, MemoryPort, SchedulePort
 from .registry import AgentRegistry
 from .researcher import Researcher
-from .scheduler import Scheduler
 from .schedules import InMemorySchedules
 from .strategist import SalesStrategist
 
@@ -19,7 +18,7 @@ from .strategist import SalesStrategist
 def build_registry() -> AgentRegistry:
     registry = AgentRegistry()
     for agent in (Researcher(), Curator(), Planner(), Auditor(), SalesStrategist(), DiscountSpecialist(),
-                  CustomerMemoryAgent(), GroceryBasket(), Scheduler()):  # catálogo na ordem; esteira por `order`
+                  CustomerMemoryAgent(), GroceryBasket()):  # catálogo na ordem; esteira por `order`
         registry.register(agent)
     return registry
 

@@ -22,7 +22,7 @@ from .ai import ask
 from .failures import classify_failure
 from .resumption import reusable_offers, signature
 from .registry import Agent, AgentContext, AgentDefinition, AgentRegistry
-from .scheduler import SCHEDULE_NOTE, SCHEDULER_ID
+from .scheduler import SCHEDULE_NOTE, plan_schedule
 from .strategist import STRATEGIES
 
 REPLY_SYSTEM = ("Você é o atendente simpático de um chatbot de comida. Reescreva a RESPOSTA_BASE de forma natural "
@@ -194,6 +194,7 @@ class Orchestrator:
             if result.status == "needs_info":
                 break
         state.missing_data = missing
+        plan_schedule(state, events)  # compra de mercado agendada: confere o horário da cesta aprovada
         return self._finish(session.session_id, state, events, limitations)
 
     # ---- compras de supermercado e agendamentos ---------------------------------------
@@ -237,14 +238,12 @@ class Orchestrator:
 
     def _list_schedules(self, session: SessionContext, events: EventEmitter) -> AgentsOutput:
         mine = [p for p in self._my_schedules(session) if p.status == "active"]
-        events.agent_message(ORCHESTRATOR_ID, SCHEDULER_ID, new_id("task"), "request", "Quais compras estão agendadas?")
         if not mine:
             text = "Você não tem compras agendadas. Quer agendar uma? Mande a lista e o dia, ex.: mercado todo sábado às 10h: arroz, feijão e café."
         else:
             lines = "; ".join(f"{n}) {self._schedule_line(p)}" for n, p in enumerate(mine, 1))
             text = f"Suas compras agendadas: {lines}. Quer mudar ou cancelar alguma?"
-        events.agent_message(SCHEDULER_ID, ORCHESTRATOR_ID, new_id("task"), "proposal",
-                             f"{len(mine)} agendamento(s) ativo(s)")
+        events.agent_status(ORCHESTRATOR_ID, "running", None, f"Consulta de agendamentos: {len(mine)} ativo(s)")
         return self._ask(events, text)
 
     def _cancel_schedule(self, session: SessionContext, events: EventEmitter) -> AgentsOutput:
@@ -261,12 +260,14 @@ class Orchestrator:
             return self._ask(events, "Não achei esse número na sua lista de agendamentos. Pode conferir?")
         target = mine[index]
         self._schedules.save(replace(target, status="cancelled"))
-        events.agent_message(ORCHESTRATOR_ID, SCHEDULER_ID, new_id("task"), "resolution",
-                             f"Agendamento cancelado a pedido do cliente: {target.schedule_id}")
         events.memory_changed("customer" if target.client_key else "session", ["schedules"],
                               "Compra agendada cancelada pelo cliente")
         return self._ask(events, f"Pronto, cancelei a compra agendada de {self._schedule_line(target)}. "
                                  "Quer agendar outra ou pedir alguma coisa agora?")
+
+    def scheduled(self, schedule_id: str) -> ScheduledPurchase | None:
+        """Agendamento pelo id (a API usa para saber a sessão e o cliente antes de rodar)."""
+        return self._schedules.get(schedule_id) if self._schedules is not None else None
 
     def due_schedules(self, now: datetime | None = None) -> list[str]:
         """Ids das compras agendadas que já chegaram na data (a API chama periodicamente)."""
@@ -298,7 +299,7 @@ class Orchestrator:
         constraints = Constraints(p.budget_cents, None, saved.dietary, saved.preferences)
         label = describe_when(when, p.recurrence)
         task = new_id("task")
-        events.agent_message(SCHEDULER_ID, ORCHESTRATOR_ID, task, "request",
+        events.agent_message(ORCHESTRATOR_ID, "researcher", task, "request",
                              f"Compra agendada chegou ({label}): refazer a cesta com os preços do dia")
         state = WorkingState(constraints=constraints, now=now, shopping_list=items,
                              preferred_merchant_id=p.merchant_id,
@@ -484,8 +485,6 @@ class Orchestrator:
         assert self._schedules is not None
         self._schedules.save(replace(scheduled, status="active"))
         line = self._schedule_line(replace(scheduled, status="active"))
-        events.agent_message(ORCHESTRATOR_ID, SCHEDULER_ID, new_id("task"), "resolution",
-                             f"Cliente confirmou o agendamento: {line}")
         events.memory_changed("customer" if scheduled.client_key else "session", ["schedules"],
                               "Compra de mercado agendada pelo cliente")
         text = (f"Agendado! ✅ {line[0].upper() + line[1:]}. Na data eu refaço a cesta com os preços do dia e peço "
