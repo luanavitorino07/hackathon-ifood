@@ -259,6 +259,32 @@ def test_closed_merchants_are_removed_even_if_search_returned_them():
     assert "is_open" not in result[1]
     assert _map_offers({"resultKind": "ITEM", "results": [item("closed", False)]}) == []
 
+    test_result = _map_offers(
+        {"resultKind": "ITEM", "results": [item("closed", False)]},
+        include_closed_for_testing=True,
+    )
+    assert [offer["product_id"] for offer in test_result] == ["closed"]
+    assert "is_open" not in test_result[0]
+    assert test_result[0]["tags"] == ["__closed_merchant_test_only__"]
+
+
+def test_closed_test_mode_requires_boolean_false_in_tool_input():
+    location = {"latitude": -22.0175, "longitude": -47.89083333}
+    part = {
+        "state": {
+            "input": {
+                "query": "pizza",
+                "resultKind": "ITEM",
+                "userLocation": location,
+                "refinements": {"onlyOpen": False},
+            }
+        }
+    }
+    _validate_tool_input(part, location=location, dietary=[], only_open=False)
+    part["state"]["input"]["refinements"]["onlyOpen"] = True
+    with pytest.raises(InvalidOutputError):
+        _validate_tool_input(part, location=location, dietary=[], only_open=False)
+
 
 def test_open_filter_and_page_size_are_in_official_discovered_schema():
     fixture = Path(__file__).parent / "fixtures" / "ifood_search_input_schema.json"

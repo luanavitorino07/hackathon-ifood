@@ -55,6 +55,10 @@ def build_application(
         agent_runtime = OpenCodeAgentRuntime(
             OpenCodeSettings.from_env(),
             sandbox_location=SandboxLocation.from_env(),
+            include_closed_for_testing=_env_flag(
+                "IFOOD_INCLUDE_CLOSED_FOR_TESTS",
+                default=False,
+            ),
         )
     selected_memory, owns_memory = _select_memory(memory, memory_backend)
     services = build_agent_services(

@@ -18,6 +18,7 @@ def clean_location(monkeypatch):
         "IFOOD_FALLBACK_LOCATION_SOURCE",
         "APP_RUNTIME_MODE",
         "APP_ALLOW_LOCAL_DEMO_ADMIN",
+        "IFOOD_INCLUDE_CLOSED_FOR_TESTS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -79,6 +80,17 @@ def test_local_launcher_clears_inherited_demo_admin_option(monkeypatch):
     monkeypatch.setenv("APP_ALLOW_LOCAL_DEMO_ADMIN", "1")
     configure_local_environment(real=True)
     assert "APP_ALLOW_LOCAL_DEMO_ADMIN" not in os.environ
+
+
+def test_local_launcher_can_include_closed_restaurants_for_real_tests():
+    configure_local_environment(real=True, include_closed_restaurants=True)
+    assert os.environ["IFOOD_INCLUDE_CLOSED_FOR_TESTS"] == "1"
+
+
+def test_local_launcher_clears_inherited_closed_restaurant_option(monkeypatch):
+    monkeypatch.setenv("IFOOD_INCLUDE_CLOSED_FOR_TESTS", "1")
+    configure_local_environment(real=True)
+    assert "IFOOD_INCLUDE_CLOSED_FOR_TESTS" not in os.environ
 
 
 def test_other_city_is_not_silently_searched_in_sao_carlos():

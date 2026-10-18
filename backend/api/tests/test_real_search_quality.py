@@ -17,6 +17,7 @@ from backend.integrations.config import (
 from backend.integrations.opencode_client import OpenCodeRunResult
 from backend.integrations.search_quality import (
     AVAILABILITY_UNKNOWN,
+    CLOSED_TEST_ONLY,
     CUSTOMIZATION_UNKNOWN,
     DISTANCE_UNKNOWN,
     OPEN_FILTERED,
@@ -69,7 +70,9 @@ class MockSearchClient:
                                 "query": self.query,
                                 "resultKind": "ITEM",
                                 "userLocation": location,
-                                "refinements": {"onlyOpen": True},
+                                "refinements": {
+                                    "onlyOpen": "refinements.onlyOpen=true" in kwargs["prompt"]
+                                },
                             },
                             "output": json.dumps({"resultKind": "ITEM", "results": self.items}),
                         },
@@ -169,6 +172,66 @@ def test_http_returns_only_requested_dish_prices_and_honest_catalog_warnings(cus
     assert len(mock.calls) == (2 if customization else 1)
     assert all("refinements.onlyOpen=true" in call["prompt"] for call in mock.calls)
     assert all("pageSize=20" in call["prompt"] for call in mock.calls)
+
+
+def test_http_can_show_closed_restaurant_as_unavailable_local_test_option():
+    closed = item("Pizza", "closed_item", "closed_merchant", 20)
+    closed["merchant"]["isOpen"] = False
+    mock = MockSearchClient("pizza", [closed])
+    runtime = OpenCodeAgentRuntime(
+        OpenCodeSettings(),
+        sandbox_location=SandboxLocation(-23.55, -46.63),
+        client_factory=lambda: mock,
+        include_closed_for_testing=True,
+    )
+    app = build_application(
+        runtime=runtime,
+        runtime_mode="real",
+        memory_backend="ephemeral",
+    )
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://test"
+        ) as client:
+            session_id = (
+                await client.post("/api/v1/sessions", json={"client_id": None})
+            ).json()["session_id"]
+            response = await client.post(
+                "/api/v1/chat/messages",
+                json={
+                    "session_id": session_id,
+                    "client_message_id": "closed_test",
+                    "text": "Quero pizza para uma pessoa até R$ 50",
+                    "input_mode": "text",
+                    "transcription_id": None,
+                },
+            )
+            assert response.status_code == 202
+            snapshot = (await client.get(f"/api/v1/sessions/{session_id}/snapshot")).json()
+            assert snapshot["recommendations"]
+            assert CLOSED_TEST_ONLY in snapshot["recommendations"][0]["warnings"]
+            reply = next(
+                message["text"]
+                for message in snapshot["messages"]
+                if message["role"] == "assistant"
+            )
+            assert "somente para teste" in reply
+            assert "não está disponível para pedido" in reply
+            blocked = await client.post(
+                "/api/v1/orders/submit",
+                json={
+                    "session_id": session_id,
+                    "recommendation_id": snapshot["recommendations"][0]["recommendation_id"],
+                    "client_action_id": "closed_order_attempt",
+                    "confirmed": True,
+                },
+            )
+            assert blocked.status_code == 409
+            assert blocked.json()["error"]["code"] == "CLOSED_RESTAURANT_TEST_ONLY"
+
+    asyncio.run(scenario())
+    assert "refinements.onlyOpen=false" in mock.calls[0]["prompt"]
 
 
 def test_query_substitution_is_rejected_without_automatic_retry():

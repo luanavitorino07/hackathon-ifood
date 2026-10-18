@@ -55,6 +55,13 @@ itens com `merchant.isOpen=false`; booleano verdadeiro é repassado como `is_ope
 Se todas as lojas estiverem fechadas, devolve lista vazia. Ausência do status não
 vira um booleano verdadeiro inventado. Abertura é referida ao momento da consulta.
 
+Para demonstrações locais fora do horário comercial existe uma exceção opt-in:
+`--include-closed-restaurants`. Ela envia `onlyOpen=false` e permite que o planejador
+monte uma proposta com a oferta fechada, mas a recomendação e o chat informam
+explicitamente que a loja está fechada, que a opção serve somente para teste e que
+não está disponível para pedido. A API também bloqueia uma eventual tentativa de
+submeter essa recomendação. O modo normal continua excluindo lojas fechadas.
+
 Avisos de entrega ainda não garantida, distância, ingredientes, alterações e preço
 dos complementos não confirmados são preservados em `Recommendation.warnings`.
 O chat acrescenta só uma frase curta de confirmação, sem repetir todos os avisos.
@@ -210,6 +217,12 @@ inicie explicitamente com:
 
 ```text
 python -m backend.api.run_local --real --local-demo-admin
+```
+
+Se os restaurantes estiverem fechados durante a apresentação, use:
+
+```text
+python -m backend.api.run_local --real --local-demo-admin --include-closed-restaurants
 ```
 
 Essa opção só concede o gestor fictício quando tanto o cliente quanto o host da URL

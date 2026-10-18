@@ -50,7 +50,7 @@ class _FakeOpenCode:
                                     "longitude": -46.63,
                                 },
                                 "refinements": {
-                                    "onlyOpen": True,
+                                    "onlyOpen": "refinements.onlyOpen=true" in kwargs["prompt"],
                                     **(
                                         {"itemRestrictions": ["VEGETARIAN"]}
                                         if "Use refinements.itemRestrictions=" in kwargs["prompt"]
@@ -149,6 +149,47 @@ def test_runtime_maps_raw_mcp_output_and_ignores_model_structured_output() -> No
     assert '"latitude": -23.55' in client.prompt_kwargs["prompt"]
     assert client.prompt_kwargs["timeout_seconds"] == 60.0
     assert client.closed is True
+
+
+def test_runtime_can_include_closed_merchants_only_in_explicit_test_mode() -> None:
+    from backend.integrations.search_quality import CLOSED_TEST_ONLY, CLOSED_TEST_TAG
+
+    payload = {
+        "resultKind": "ITEM",
+        "results": [
+            {
+                "itemId": "closed_item",
+                "itemName": "Pizza de teste",
+                "unitPrice": 20,
+                "merchant": {
+                    "merchantId": "closed_merchant",
+                    "merchantName": "Loja fechada",
+                    "isOpen": False,
+                    "deliveryMethod": {"fee": 0},
+                },
+            }
+        ],
+    }
+    client = _FakeOpenCode(payload)
+    runtime = OpenCodeAgentRuntime(
+        OpenCodeSettings(),
+        sandbox_location=SandboxLocation(-23.55, -46.63),
+        client_factory=lambda: client,
+        include_closed_for_testing=True,
+    )
+
+    result = asyncio.run(runtime._execute(_call()))
+
+    assert result.ok is True
+    offer = result.structured["offers"][0]
+    assert offer["product_id"] == "closed_item"
+    assert offer["tags"] == [CLOSED_TEST_TAG]
+    assert "is_open" not in offer
+    assert "refinements.onlyOpen=false" in client.prompt_kwargs["prompt"]
+    assert "restaurantes fechados podem ser exibidos" in result.traces[0].summary
+    assert CLOSED_TEST_ONLY in runtime.recommendation_warnings(
+        "sess_1", "closed_merchant", ["closed_item"]
+    )
 
 
 def test_runtime_requires_coordinates_when_sandbox_fallback_is_absent() -> None:

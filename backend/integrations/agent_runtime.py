@@ -26,6 +26,7 @@ from .errors import (
 )
 from .opencode_client import OpenCodeClient, OpenCodeRunResult
 from .search_quality import (
+    CLOSED_TEST_TAG,
     SearchEvidenceStore,
     SearchIntent,
     normalized_text,
@@ -112,11 +113,13 @@ class OpenCodeAgentRuntime:
         sandbox_location: SandboxLocation | None = None,
         client_factory: Callable[[], _OpenCodePort] | None = None,
         evidence_store: SearchEvidenceStore | None = None,
+        include_closed_for_testing: bool = False,
     ) -> None:
         self._settings = settings
         self._sandbox_location = sandbox_location
         self._client_factory = client_factory or (lambda: OpenCodeClient(settings))
         self._evidence = evidence_store or SearchEvidenceStore()
+        self._include_closed_for_testing = include_closed_for_testing
 
     def recommendation_warnings(
         self,
@@ -177,7 +180,12 @@ class OpenCodeAgentRuntime:
             response = await client.run_prompt(
                 session_id,
                 system=call.system,
-                prompt=_build_search_prompt(call.prompt, location, dietary),
+                prompt=_build_search_prompt(
+                    call.prompt,
+                    location,
+                    dietary,
+                    only_open=not self._include_closed_for_testing,
+                ),
                 tools=enabled_tools,
                 timeout_seconds=call.timeout_s,
             )
@@ -188,9 +196,16 @@ class OpenCodeAgentRuntime:
             )
             payload = _tool_payload(part)
             _raise_mcp_error(payload)
-            _validate_tool_input(part, location=location, dietary=dietary, only_open=True)
+            only_open = not self._include_closed_for_testing
+            _validate_tool_input(part, location=location, dietary=dietary, only_open=only_open)
             intent.validate_query(part["state"]["input"]["query"])
-            offers, mismatches = select_matching_offers(_map_offers(payload), intent)
+            offers, mismatches = select_matching_offers(
+                _map_offers(
+                    payload,
+                    include_closed_for_testing=self._include_closed_for_testing,
+                ),
+                intent,
+            )
             duration_ms = _tool_duration_ms(part)
             if duration_ms is None:
                 duration_ms = max(0, round((monotonic() - started_at) * 1000))
@@ -202,7 +217,7 @@ class OpenCodeAgentRuntime:
                 offers,
                 public_location=resolved_location.source == "public_test",
                 customization=intent.customization_requested,
-                only_open=True,
+                only_open=only_open,
             )
             trace = _TraceData(
                 call_id=call_id,
@@ -212,7 +227,12 @@ class OpenCodeAgentRuntime:
                 duration_ms=duration_ms,
                 summary=(
                     _trace_summary(len(offers), resolved_location.source)
-                    + " Filtro oficial onlyOpen aplicado na consulta."
+                    + (
+                        " Filtro oficial onlyOpen aplicado na consulta."
+                        if only_open
+                        else " Modo local de teste: restaurantes fechados podem ser exibidos, "
+                        "sem disponibilidade para pedido."
+                    )
                     + (
                         f" {mismatches} item(ns) sem correspondência textual descartado(s)."
                         if mismatches
@@ -360,6 +380,8 @@ def _build_search_prompt(
     agent_prompt: str,
     location: Mapping[str, float],
     dietary: Sequence[str],
+    *,
+    only_open: bool = True,
 ) -> str:
     required_terms = sorted(SearchIntent.from_prompt(agent_prompt).terms)
     dietary_instruction = (
@@ -367,12 +389,19 @@ def _build_search_prompt(
         if dietary
         else "Não envie refinements.itemRestrictions. "
     )
+    availability_instruction = (
+        "Retorne apenas lojas abertas agora. "
+        if only_open
+        else "Este é um teste local: inclua também lojas fechadas, sem afirmar que estão "
+        "disponíveis para pedido. "
+    )
     return (
         "Execute exatamente uma chamada à tool searchOffers do MCP do iFood. "
         "Busque itens (resultKind ITEM), nunca merchants. Use exatamente "
         f"userLocation={json.dumps(dict(location), ensure_ascii=False)}. "
         f"{dietary_instruction}"
-        "Use refinements.onlyOpen=true para retornar apenas lojas abertas agora. "
+        f"Use refinements.onlyOpen={'true' if only_open else 'false'}. "
+        f"{availability_instruction}"
         "Não use localização inferida e não chame outras tools. "
         "A query deve preservar o prato e qualificadores explícitos do pedido: "
         "não reduza um prato específico ao ingrediente, não substitua por similares "
@@ -420,7 +449,7 @@ def _validate_tool_input(
     *,
     location: Mapping[str, float],
     dietary: Sequence[str],
-    only_open: bool = False,
+    only_open: bool | None = None,
 ) -> None:
     state = part.get("state")
     if not isinstance(state, Mapping):
@@ -442,9 +471,12 @@ def _validate_tool_input(
             raise InvalidOutputError("invalid_mcp_response")
         if float(actual) != location[coordinate]:
             raise InvalidOutputError("invalid_mcp_response")
-    if only_open:
+    if only_open is not None:
         refinements = tool_input.get("refinements")
-        if not isinstance(refinements, Mapping) or refinements.get("onlyOpen") is not True:
+        if (
+            not isinstance(refinements, Mapping)
+            or refinements.get("onlyOpen") is not only_open
+        ):
             raise InvalidOutputError("invalid_mcp_response")
     if dietary:
         refinements = tool_input.get("refinements")
@@ -510,7 +542,11 @@ def _raise_mcp_error(payload: Mapping[str, Any]) -> None:
     raise error_type(detail, retryable=retryable)
 
 
-def _map_offers(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _map_offers(
+    payload: Mapping[str, Any],
+    *,
+    include_closed_for_testing: bool = False,
+) -> list[dict[str, Any]]:
     if payload.get("resultKind") != "ITEM":
         raise InvalidOutputError("invalid_mcp_response")
     raw_results = payload.get("results")
@@ -523,7 +559,8 @@ def _map_offers(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
             continue
         try:
             merchant = _required_mapping(raw, "merchant")
-            if merchant.get("isOpen") is False:
+            closed_for_testing = merchant.get("isOpen") is False
+            if closed_for_testing and not include_closed_for_testing:
                 closed_filtered += 1
                 continue
             delivery = _required_mapping(merchant, "deliveryMethod")
@@ -546,13 +583,13 @@ def _map_offers(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
                     "unit_price_cents": _brl_to_cents(price),
                     "merchant_id": _required_text(merchant, "merchantId"),
                     "merchant_name": _required_text(merchant, "merchantName"),
-                    "tags": [],
+                    "tags": [CLOSED_TEST_TAG] if closed_for_testing else [],
                     "delivery_fee_cents": None if fee is None else _brl_to_cents(fee),
                     "other_fees_cents": None,
                     "eta_minutes": eta,
                     **(
                         {"is_open": merchant["isOpen"]}
-                        if isinstance(merchant.get("isOpen"), bool)
+                        if isinstance(merchant.get("isOpen"), bool) and not closed_for_testing
                         else {}
                     ),
                 }

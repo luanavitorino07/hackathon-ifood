@@ -42,6 +42,11 @@ CUSTOMIZATION_UNKNOWN = (
     "Preço do item base; adicionais não verificados não estão incluídos."
 )
 PUBLIC_LOCATION = "Busca em coordenadas públicas de teste; não confirma entrega no seu endereço."
+CLOSED_TEST_ONLY = (
+    "Restaurante fechado no momento da consulta; opção exibida somente para teste e "
+    "indisponível para pedido."
+)
+CLOSED_TEST_TAG = "__closed_merchant_test_only__"
 
 
 def normalized_text(value: str) -> str:
@@ -144,16 +149,16 @@ class SearchEvidenceStore:
         customization: bool,
         only_open: bool = False,
     ) -> None:
-        notes = [
+        base_notes = [
             OPEN_FILTERED if only_open else AVAILABILITY_UNKNOWN,
             DISTANCE_UNKNOWN,
             CUSTOMIZATION_UNKNOWN,
         ]
         if public_location:
-            notes.append(PUBLIC_LOCATION)
+            base_notes.append(PUBLIC_LOCATION)
         # Sem schema oficial de complementos, até os não solicitados são desconhecidos.
         if customization:
-            notes.append(
+            base_notes.append(
                 "A personalização solicitada ainda precisa ser confirmada pelo restaurante."
             )
         with self._lock:
@@ -161,6 +166,9 @@ class SearchEvidenceStore:
             entries = self._sessions.pop(session_id, {})
             entries = {key: value for key, value in entries.items() if value[0] > now}
             for offer in offers:
+                notes = list(base_notes)
+                if CLOSED_TEST_TAG in offer.get("tags", ()):
+                    notes[0] = CLOSED_TEST_ONLY
                 entries[(offer["merchant_id"], offer["product_id"])] = (
                     now + self._ttl,
                     tuple(notes),

@@ -15,6 +15,8 @@ from typing import Any, Iterator, Literal, Protocol
 
 from fastapi import Request
 
+from backend.integrations.search_quality import CLOSED_TEST_ONLY
+
 from .models import Actor, AgentDefinition, ChatMessageRequest, SubmitOrderRequest
 
 
@@ -231,13 +233,20 @@ class StateEventSink:
         if type == "chat_message" and self._catalog_notes.get():
             message = payload["message"]
             if message["role"] == "assistant":
+                availability_notice = (
+                    " Esta opção é somente para teste: o restaurante estava fechado no "
+                    "momento da consulta e não está disponível para pedido."
+                    if CLOSED_TEST_ONLY in self._catalog_notes.get()
+                    else ""
+                )
                 payload = {
                     **payload,
                     "message": {
                         **message,
                         "text": message["text"]
                         + " Preço, disponibilidade e personalização precisam ser confirmados "
-                        "antes de comprar.",
+                        "antes de comprar."
+                        + availability_notice,
                     },
                 }
         operation = self._state.publish_event(
