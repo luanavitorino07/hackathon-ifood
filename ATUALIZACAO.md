@@ -55,8 +55,11 @@ Testes na `main`: `pytest` (57 aprovados, 1 teste real opt-in pulado) e
 # API em modo demo (padrão): catálogo fictício, sem iFood/Gemini/internet
 uvicorn backend.api.main:app --port 8000
 
-# API em modo real: exige OpenCode rodando e credenciais locais (ver backend/api/README.md)
-APP_RUNTIME_MODE=real uvicorn backend.api.main:app --port 8000
+# API em modo real: exige `opencode serve --hostname 127.0.0.1 --port 4096` rodando na pasta do
+# projeto, credenciais locais e OAuth feito (ver backend/api/README.md). Sem as coordenadas abaixo,
+# a busca falha com location_required. (No Windows: `set VAR=valor` em linhas separadas.)
+APP_RUNTIME_MODE=real IFOOD_SANDBOX_LATITUDE=-23.5505 IFOOD_SANDBOX_LONGITUDE=-46.6333 \
+  IFOOD_FALLBACK_LOCATION_SOURCE=public_test uvicorn backend.api.main:app --port 8000
 
 # Plano B: demonstração só no terminal, sem API nem rede
 python3 -m backend.agents.demo --roteiro --escritorio
@@ -68,14 +71,14 @@ python3 -m backend.agents.demo --roteiro --escritorio
 ## O que foi comprovado de verdade
 
 - Fluxo completo em modo demo pela API: sessão → mensagem → 6 agentes → recomendação → SSE.
-- Uma busca **real** no MCP do iFood pela API (5 ofertas, 3 recomendações), sem carrinho, pedido ou pagamento.
+- **Três** buscas **reais** no MCP do iFood pela API, em duas máquinas diferentes (Lorenzo: 5 ofertas, 3 recomendações; segunda máquina: 2 buscas, ver topo), sem carrinho, pedido ou pagamento.
 - Comprador não recebe eventos internos do gestor.
 - Nenhuma credencial versionada: `opencode.json` só referencia arquivos locais ignorados pelo Git.
 
 ## O que ainda NÃO está pronto
 
 1. **Filtro vegetariano ao vivo** (`refinements.itemRestrictions`) — funcionou em uma amostra (ver acima); falta testar "uma opção vegetariana" e repetir.
-2. **Cota do Gemini**: o modelo atual permite cerca de 20 solicitações; o fluxo real estourou após a primeira busca. Economize chamadas reais.
+2. **Cota do Gemini**: o modelo atual permite cerca de 20 solicitações. A chave do Lorenzo estourou após a primeira busca; uma chave nova aguentou as 2 buscas do teste. Economize chamadas reais.
 3. **Memória persistente** (`backend/memory`).
 4. **Autenticação real** de comprador e gestor.
 5. **Transcrição de áudio** (provedor STT).
@@ -92,6 +95,8 @@ python3 -m backend.agents.demo --roteiro --escritorio
 
 ## Regras que continuam valendo
 
-- Merge na `main` somente com autorização humana, via PR.
+- Merge de código na `main` somente com autorização humana, via PR. Exceção autorizada: este
+  `ATUALIZACAO.md` é atualizado direto na `main` para comunicar o time (dê `git pull` e leia antes de
+  cada tarefa).
 - Nunca colocar credenciais, tokens ou dados pessoais em código, commits, logs ou eventos.
 - Dados de demonstração sempre marcados como `demo`; nunca apresentar simulação como dado real do iFood.
