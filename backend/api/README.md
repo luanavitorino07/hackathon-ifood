@@ -27,7 +27,7 @@ O teste real continua desabilitado, salvo `RUN_LIVE_IFOOD=1` explícito. Os test
 offline cobrem conversa, seis agentes, preferência por pizza, orçamento/restrições,
 contexto compartilhado e isolamento de eventos HTTP/SSE entre comprador e gestor.
 
-## Qualidade da busca — alterações locais em preparação
+## Qualidade e limites da busca
 
 O runtime real protege a especificidade do pedido com uma guarda lexical: a query
 e os nomes dos itens devem manter os termos significativos do prato solicitado.
@@ -41,9 +41,15 @@ restaurantes retornados. Não são inventadas outras lojas nem ampliadas permiss
 ou chamadas. O retorno existente já contém preço unitário em centavos e mantém a
 promoção informada pelo MCP; personalização não confirmada não vira adicional cobrado.
 
-Como o catálogo consumer detalhado ainda precisa ser confirmado, avisos de dados
-desconhecidos são preservados em `Recommendation.warnings` e no texto do assistente:
-loja aberta/entrega, distância, ingredientes, alterações e preço dos complementos.
+O schema oficial de entrada foi consultado por `tools/list`: as buscas exigem
+`refinements.onlyOpen=true` e pedem `pageSize=20` (máximo oficial 25), em uma chamada.
+O runtime confere que o filtro foi realmente enviado e descarta defensivamente
+itens com `merchant.isOpen=false`; booleano verdadeiro é repassado como `is_open`.
+Se todas as lojas estiverem fechadas, devolve lista vazia. Ausência do status não
+vira um booleano verdadeiro inventado. Abertura é referida ao momento da consulta.
+
+Avisos de entrega ainda não garantida, distância, ingredientes, alterações e preço
+dos complementos não confirmados são preservados em `Recommendation.warnings` e no chat.
 Uma busca com coordenadas públicas não confirma entrega no endereço do usuário.
 Não foram criados campos HTTP de modificadores nem novas ferramentas MCP.
 
@@ -51,14 +57,17 @@ Os avisos são associados a sessão/produto/loja por um armazenamento efêmero l
 e com validade de cinco minutos, sem guardar prompt, endereço, credenciais ou retorno
 bruto. Isso não é cache de ofertas e não implementa a retomada dos agentes.
 
-Diagnóstico local desta revisão: OpenCode informa MCP conectado, mas a consulta de
-catálogo com o token salvo recebeu HTTP 401. Esse status não prova falha após refresh
-automático pelo OpenCode; renovar/verificar OAuth antes de validar ao vivo. Nenhuma
-busca real foi executada nesta revisão. Os testes usam OpenCode/MCP simulados.
+O token antigo inicialmente recebeu HTTP 401. O diagnóstico OAuth do OpenCode
+conseguiu reconectar, e a listagem autenticada de ferramentas voltou a responder.
+O schema sanitizado está em `backend/integrations/tests/fixtures/ifood_search_input_schema.json`.
+Uma busca direta somente leitura também validou `onlyOpen=true` em São Carlos:
+20 resultados, todos com `merchant.isOpen=true`, sem Gemini. Isso não é teste do
+fluxo completo via API/Gemini; a suíte automatizada usa OpenCode/MCP simulados.
 
-O catálogo e o classificador do modo demo pertencem a `backend/agents`; ainda podem
-retornar comidas genéricas quando não há correspondência ou não reconhecer um prato
-fora das palavras-chave. O encaminhamento ao Claude está no `ATUALIZACAO.md` local.
+O catálogo e o classificador do modo demo pertencem a `backend/agents`; as correções
+de relevância e retomada do Claude (PRs #6/#7) foram integradas nesta branch.
+Correspondência lexical continua limitada para sinônimos e descrições incompletas;
+o alinhamento com os agentes está registrado em `ATUALIZACAO.md`.
 
 ## Runtime
 
@@ -142,10 +151,11 @@ diferente no mesmo ID continua retornando `409`. Essa garantia é local ao proce
 o estado HTTP ainda não está persistido. Para nova tentativa explícita após falha,
 envie uma mensagem com ID novo.
 
-Nova mensagem relacionada ainda provoca nova busca na versão atual dos agentes,
-mesmo com SQLite: o orquestrador não reidrata os candidatos. Há teste de aceite
-marcado `xfail(strict=True)` em `test_message_continuity.py` para o Claude corrigir;
-isso não deve ser apresentado como continuidade implementada.
+A retomada foi implementada pelo Claude nos agentes (PR #7): candidatos válidos
+do mesmo atendimento são reidratados quando só muda quantidade ou orçamento.
+Os testes HTTP de retomada passam normalmente com memória efêmera e SQLite,
+sem `xfail`, incluindo alteração de orçamento e quantidade em sequência. Isso não
+equivale a persistir todo o atendimento HTTP entre reinícios.
 
 Em outro terminal, o teste de fumaça real é opt-in:
 

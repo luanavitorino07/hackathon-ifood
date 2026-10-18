@@ -29,6 +29,7 @@ OFFER_SCHEMA: dict[str, Any] = {
                     "delivery_fee_cents": {"type": ["integer", "null"]},
                     "other_fees_cents": {"type": ["integer", "null"]},
                     "eta_minutes": {"type": ["integer", "null"]},
+                    "is_open": {"type": ["boolean", "null"]},
                 },
             },
         }
@@ -78,7 +79,8 @@ def parse_offers(structured: dict[str, Any] | None) -> tuple[list[Offer], int]:
                 tags=tuple(str(t) for t in item.get("tags") or ()),
                 delivery_fee_cents=_int_or_none(item.get("delivery_fee_cents")),
                 other_fees_cents=_int_or_none(item.get("other_fees_cents")),
-                eta_minutes=_int_or_none(item.get("eta_minutes"))))
+                eta_minutes=_int_or_none(item.get("eta_minutes")),
+                is_open=item.get("is_open") if isinstance(item.get("is_open"), bool) else None))
         except (KeyError, TypeError, ValueError, AttributeError):
             dropped += 1
     return offers, dropped
@@ -119,7 +121,11 @@ class Researcher:
 
     def run(self, ctx: AgentContext) -> AgentResult:
         c = ctx.state.constraints
-        prompt = (f"Pedido do cliente: {ctx.session.message_text}\n"
+        terms = ctx.state.query_terms
+        product = (f"Produto desejado: {' '.join(terms)}. Use somente estes termos na query da busca, "
+                   "sem quantidade de pessoas nem orçamento, e ordene por relevância, não só por preço.\n"
+                   if terms else "")
+        prompt = (f"Pedido do cliente: {ctx.session.message_text}\n{product}"
                   f"Orçamento (centavos): {c.budget_cents}; pessoas: {c.party_size}; "
                   f"restrições: {list(c.dietary)}; preferências: {list(c.preferences)}.")
         base_filters = dietary_filters(c)

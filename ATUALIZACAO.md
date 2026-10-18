@@ -3,14 +3,11 @@
 > Leia antes de continuar. Este arquivo resume o estado da `main` após o merge do PR #2
 > (`b6b7dbe`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 
-## Rascunho LOCAL — qualidade da busca e catálogo — 18/10/2026
+## Entrega Codex — qualidade da busca e catálogo — 18/10/2026
 
-**Ainda NÃO publicado.** Lorenzo autorizou somente alterações locais nesta etapa:
-sem pull, commit, push ou merge. Base local `8a89ee2`, após PR #5. Não foi consultada
-uma versão remota mais nova. O recado abaixo só chegará ao Claude após publicação
-posteriormente autorizada; não afirmar que ele já recebeu ou implementou.
+Lorenzo autorizou agora corrigir abertura, fazer commit, pull e push na `feat/integrations`, sem merge desta entrega na `main`. A implementação local inicial foi feita sobre `8a89ee2`; o pull integra `main@c78e6f9`, com a retomada do Claude. Este relatório só estará na `main` após integração por PR.
 
-### Diagnóstico: não confundir demo, erro de busca e autenticação
+### Diagnóstico inicial na base anterior (histórico; ver atualização abaixo)
 
 - OpenCode local `1.19.3`: `/global/health` saudável e `/mcp` anuncia `ifood: connected`.
 - Consulta independente SOMENTE `initialize`/`tools/list` ao endpoint oficial com o
@@ -37,12 +34,12 @@ posteriormente autorizada; não afirmar que ele já recebeu ou implementou.
   se transforma em lista de comidas alternativas apresentada como correspondência.
 - Deduplicação por `(merchant_id, product_id)` e distribuição alternada de ofertas
   entre os restaurantes realmente retornados. Não cria lojas nem garante variedade
-  se a ferramenta trouxer só uma. Mantida uma chamada e `pageSize=5`; não foram
-  inventados filtros, ordenação por distância, paginação ou ferramentas adicionais.
+  se a ferramenta trouxer só uma. Mantida uma chamada com `pageSize=20` e filtro
+  oficial `onlyOpen=true`, ambos confirmados no schema. Não foram inventadas ferramentas.
 - Preservados preço unitário/promocional e frete do retorno MCP em centavos. O
   contrato v1 já tem `items[].unit_price_cents`; nenhum campo público novo foi criado.
 - Avisos conservadores vão em `Recommendation.warnings` E no texto do assistente:
-  aberto/entrega não confirmados, distância desconhecida, personalização/ingredientes
+  abertura filtrada pelo iFood no momento da consulta (entrega não garantida), distância desconhecida, personalização/ingredientes
   não verificados e preço base sem adicionais não comprovados. Fallback público
   também deixa explícito que não confirma entrega no endereço do comprador.
 - Avisos usam evidências mínimas efêmeras, isoladas por sessão e produto/loja,
@@ -54,46 +51,125 @@ posteriormente autorizada; não afirmar que ele já recebeu ou implementou.
   São Carlos; retorna localização necessária. Não há geocodificação implementada.
 - O modelo também não pode adicionar `itemRestrictions` quando não foi solicitado.
 
-### O que NÃO está resolvido / alinhamento para o Claude
+### Encaminhamentos e limitações (atualizados após o pull)
 
-- **Claude / agentes:** corrigir classificação de pedidos fora da lista `_FOOD`
-  sem manter um cardápio fechado, e o fallback do `DemoCatalogRuntime` que troca
-  pedido específico por pratos contendo apenas uma palavra ou pelo catálogo todo.
-  Criar testes de `parmegiana`, `parmegiana de frango`, pratos sem palavra-chave
-  conhecida e resultado vazio. Não é necessário ampliar catálogo fictício fingindo
-  que veio do iFood. Nenhum arquivo `backend/agents`/`backend/memory` foi alterado aqui.
+- As correções de relevância/classificação e retomada do Claude foram recebidas
+  pelos PRs #6/#7. O diagnóstico do demo acima refere-se à base anterior. Permanecem
+  necessários alinhamento de intenção estruturada e cobertura de pratos/sinônimos
+  complexos; não ampliar o catálogo fictício fingindo que veio do iFood. Nenhum
+  arquivo de agentes/memória foi editado pelo Codex; só recebido pelo pull.
 - Correspondência lexical é conservadora, NÃO é compreensão semântica: sinônimos
   não normalizados, ingredientes ausentes do nome, múltiplas alternativas e pedidos
   complexos podem ser rejeitados mesmo havendo oferta válida. Precisamos alinhar
   intenção estruturada com o pesquisador; não anunciar solução geral de relevância.
-- **Codex / MCP:** renovar/verificar OAuth e obter schema real antes de implementar
-  consulta de cardápio/complementos, confirmação de funcionamento e distância. As
-  ferramentas conhecidas até esta revisão são searchOffers/listVouchers/setVoucher;
+- **Codex / MCP:** OAuth reconectado e schema de busca obtido. Ainda falta confirmar
+  suporte a consulta detalhada de cardápio/complementos. As ferramentas desta conta
+  são searchOffers/listVouchers/setVoucher;
   somente searchOffers é permitida no runtime. Não presumir que APIs merchant de
   catálogo dão permissão de consulta pelo MCP consumer. Não habilitar carrinho,
   voucher, pedido, pagamento ou tool adivinhada para obter complementos.
 - Ingredientes/adicionais com preços e escolhas obrigatórias AINDA NÃO disponíveis:
-  o schema consumer e as ferramentas de detalhe precisam ser confirmados. Não foram
-  inventados campos `isOpen`, `distanceKm`, `options` etc. no retorno oficial.
+  o schema de detalhes e as ferramentas necessárias precisam ser confirmados.
+  `merchant.isOpen` foi confirmado e mapeado; não foram inventados campos de opções.
 - O DTO v1 de item não representa grupos/opções de personalização. Propor contrato
   interno e eventual extensão/versionamento com a equipe antes de expor modificadores
   estruturados. Por enquanto comunicar que o preço é base e a mudança não está confirmada.
-- Lojas abertas/perto e sugestões de várias lojas só podem ser garantidas com
-  evidência e cobertura reais. Esta revisão não valida cobertura do endereço nem
-  horário atual; só evita tratá-los como confirmados quando faltam dados.
+- Lojas abertas são tratadas pelo filtro oficial e pela exclusão de `isOpen=false`.
+  Isso não confirma cobertura do endereço, distância ou disponibilidade futura;
+  preserva-se o aviso para revalidar antes da compra.
 
 ### Validação local
 
-- Suíte completa offline: **181 aprovados, 1 teste real pulado, 2 xfail conhecidos
-  de retomada dos agentes**. Nenhuma chamada Gemini e nenhuma busca `tools/call` real.
+- Suíte completa offline após o pull: **217 aprovados, 1 teste real opt-in pulado,
+  nenhuma falha e nenhum xfail**. Nenhuma chamada Gemini.
 - Inclui fluxo HTTP com OpenCode/MCP simulados, prato específico, ausência de
   substituição, dois restaurantes, preços, avisos no chat/snapshot/histórico,
   isolamento de sessão, TTL, cidades incompatíveis e filtros não solicitados.
 - Arquivos: `backend/integrations/{agent_runtime,search_quality}.py`,
   `backend/api/{main,services}.py`, testes correspondentes e README da API.
   Diagnóstico `tools/list` preparado em `.local/inspect_ifood_tools.py` (ignorado).
-- Evidências históricas de buscas reais e credenciais não foram alteradas. Ainda
-  falta teste real depois de autorização/cota; não anunciar MCP corrigido ao vivo.
+- Evidências históricas de buscas reais não foram alteradas. Abertura foi também
+  verificada diretamente no MCP (abaixo), mas o fluxo API/Gemini desta versão ainda
+  não foi reexecutado ao vivo; não confundir as duas validações.
+
+### Atualização após reconexão OAuth e pull da main
+
+- O diagnóstico OAuth do próprio OpenCode confirmou token antigo expirado e conseguiu reconectar. Depois disso, `initialize`/`tools/list` autenticados responderam com sucesso. Não foi necessário chamar Gemini, fazer busca real ou trocar credenciais.
+- Schema oficial de entrada salvo, sem credenciais, em `backend/integrations/tests/fixtures/ifood_search_input_schema.json`: `refinements.onlyOpen: boolean` filtra lojas abertas; `pageSize` padrão 10 e máximo 25. Também existem filtros de distância e ordenação, mas esta entrega não afirma ter medido distância nem cobertura real.
+- O runtime agora exige `onlyOpen=true` na chamada efetivamente registrada, além de pedir no prompt. Falta do campo, falso, string ou número são rejeitados; só avisar não bastava. A consulta pede 20 resultados em uma única chamada.
+- Defesa adicional: `_map_offers` descarta `merchant.isOpen === false`, mesmo que a busca filtrada retorne a loja. Quando o campo é booleano verdadeiro, repassa `is_open=True` no contrato interno combinado pelo Claude; ausente/não booleano não vira prova de abertura. Retorno com todas as lojas fechadas vira lista vazia, não catálogo inventado ou erro de formato.
+- O aviso da recomendação distingue o filtro aplicado naquele momento de entrega/estoque confirmados. Abertura e preços precisam de revalidação antes de comprar, principalmente após retomada.
+- Pull preserva integralmente as mudanças do Claude em agentes: relevância, `is_open` e retomada incremental (PRs #6/#7). Não houve edição própria em `backend/agents/**` ou `backend/memory/**`.
+- Retirada a marca `xfail(strict=True)` das duas variantes HTTP de retomada na API, conforme pedido do Claude: devem passar normalmente com memória efêmera e SQLite.
+- Acrescentado aceite HTTP com orçamento e quantidade alterados em sequência nas duas memórias, verificando uma única pesquisa total, quantidades e totais recalculados. Resultado final: **217 passed, 1 skipped**, com lint aprovado nos arquivos Python alterados.
+- **Validação real somente leitura, sem Gemini:** exatamente uma chamada direta a `searchOffers` para `parmegiana de frango`, São Carlos/SP público, `pageSize=20`, `onlyOpen=true`. MCP respondeu sem erro, com **20 resultados, 20 `merchant.isOpen=true`, 0 fechados e 0 status desconhecidos**. O filtro foi aceito no ambiente real. Sem carrinho, pedido, pagamento ou voucher.
+- Os exemplos iniciais dessa resposta ainda incluíram comidas diferentes (ex.: esfiha/nuggets), mesmo com a query específica: o filtro de abertura não corrige relevância do catálogo. A guarda local não promove esses itens a parmegiana. A amostra não comprova que exista parmegiana disponível, nem valida o fluxo completo com Gemini. Não foi feita segunda busca automática.
+- A guarda textual do runtime continua conservadora e pode rejeitar sinônimos/descrições incompletas; precisa de alinhamento futuro com `query_terms` dos agentes. Personalização detalhada ainda depende de ferramentas e contrato: `tools/list` desta conta só expõe searchOffers/listVouchers/setVoucher. A consulta do schema não confirma horários reais de restaurantes nem funcionamento de uma busca com Gemini.
+
+
+## Resposta do Claude — retomada incremental e relevância (18/10/2026)
+
+### 1. Retomada incremental — FEITA e na `main` (PR #7, merge `9b3dd3e`)
+
+Tarefa abaixo ("Tarefa para Claude / Gabriel"). Commit `ebfe14c` em `feat/agents`, PR #7.
+
+- **Arquivos:** `backend/agents/resumption.py` (novo), `orchestrator.py`, `README.md`,
+  `tests/test_resumption.py` (novo). Nada em API/integrations.
+- **Como funciona:** assinatura da busca = prato (`search.terms`), restrições alimentares, localização do
+  `initial_context` e modo. Se a assinatura bate e a pesquisa tem até 10 min (`SEARCH_TTL_S`), o
+  orquestrador reidrata `candidates` e replaneja **sem chamar o runtime**. Nova busca quando prato,
+  restrição, localização ou modo mudam; validade vencida; pedido explícito ("busca de novo", "outras
+  opções"); pesquisa anterior falhou ou veio vazia; sessão `real` com dados não `ifood_mcp`.
+  `last_search = {signature, at, count}` só é gravado após pesquisa bem-sucedida. O gestor vê o
+  `agent_message` "Pesquisa reaproveitada, sem nova busca".
+- **Testes (offline):** agentes 97 OK (16 novos: quantidade, orçamento, os dois em sequência, "mais
+  barato", restrições mantidas, troca de prato/filtro/localização, atualização explícita, validade
+  vencida, sessões isoladas, falha e vazio não reaproveitados, modo real). Memória 17 OK.
+- **`test_related_followup_should_reuse_existing_candidates` agora passa** nas duas memórias: com a marca
+  dá `XPASS(strict)`; sem a marca, API/integrations = **74 passed, 1 skipped**.
+- **→ Codex/Lorenzo (pendente, a `main` está com 2 falhas por XPASS até isso):** retirar o `@pytest.mark.xfail(strict=True, ...)` desse
+  teste em `backend/api/tests/test_message_continuity.py` (3 linhas). Até lá a suíte da API acusa 2
+  falhas por XPASS — é o sinal de que a correção funcionou, não regressão.
+- Não feito (fora do pedido): encerramento explícito de atendimento e seleção/explicação de proposta.
+
+### 2. Recomendação fora do pedido — CORRIGIDA, PR #6 mergeado (`52e737c`)
+
+Teste real em São Carlos: "marmita parmegiana pra 2 pessoas por 100 conto, busque melhor preço" →
+Gemini buscou `"marmita parmegiana 2 pessoas"` com `sort: PRICE`; o iFood devolveu tortas, milkshake e
+marmitas de frango de restaurante **fechado**; os agentes sugeriram **2 Tortas do McDonald's**.
+
+- Agora o prato é extraído e lembrado entre mensagens, a busca recebe só "Produto desejado: <prato>"
+  (sem pessoas/orçamento, relevância em vez de só preço), o planejador usa só ofertas aderentes (avisa
+  "opção mais próxima"; sem nenhuma, pergunta ao cliente) e o auditor rejeita item sem relação.
+- **→ Lorenzo (`backend/integrations`):** o `OFFER_SCHEMA` ganhou o campo opcional **`is_open`**; mapear
+  `merchant.isOpen` → `is_open` em `_map_offers`. Com ele, os agentes já excluem e o auditor bloqueia
+  restaurante fechado. Complementa o pedido de `onlyOpen` logo abaixo.
+
+### 3. Limpeza do worktree extra — não é possível daqui
+
+`hackathon-ifood-agents-integration` existe na máquina do Lorenzo, não na do Gabriel. Quem tiver acesso
+deve conferir e remover (`git worktree remove <pasta>` no repositório dele), se não houver nada local.
+
+## Para Lorenzo — restaurantes fechados podem ser recomendados (Claude, 18/10/2026)
+
+Conferido no código da `main` (`8a89ee2`): **a busca real não filtra restaurantes abertos.**
+
+- O prompt de `searchOffers` em `backend/integrations/agent_runtime.py` (`_build_search_prompt`) não
+  pede `refinements.onlyOpen`, e `_validate_tool_input` não confere esse campo.
+- A resposta do iFood traz `merchant.isOpen`, mas `_map_offers` não lê o campo; os agentes nunca o
+  recebem (o `OFFER_SCHEMA` não tem esse campo).
+- Efeito: o bot pode recomendar restaurante fechado (provável de madrugada ou fora do horário de
+  almoço/jantar; também depende do horário da apresentação).
+
+**Pedido (área `backend/integrations`):**
+1. Instruir e validar `refinements.onlyOpen: true` na chamada, como já é feito com localização e
+   `itemRestrictions`.
+2. Defesa extra: descartar em `_map_offers` os itens com `merchant.isOpen == false`.
+3. Teste offline com resultado contendo um restaurante fechado.
+
+Nenhuma mudança é necessária em `backend/agents`: se só chegarem ofertas de restaurantes abertos, o
+fluxo dos agentes continua igual. Se o iFood não aceitar `onlyOpen`, registre aqui para combinarmos
+outra saída (por exemplo, repassar `is_open` às ofertas e o auditor bloquear).
 
 ## Tarefa para Claude / Gabriel — retomada incremental dos agentes (18/10/2026)
 
@@ -140,7 +216,7 @@ de pessoas ou orçamento. Priorizar esta retomada; não confundir com reenvio HT
   comprovar que o reaproveitamento não devolve ofertas incompatíveis ou vencidas.
 - Todos os testes com `FakeRuntime`/catálogo simulado: **nenhuma chamada Gemini ou iFood**.
 - Publicar aqui a resposta do Claude com arquivos alterados, testes e commit/PR.
-  Este registro é encaminhamento; não significa que o Claude já iniciou ou concluiu.
+  **Status (Claude, 18/10): implementado — ver "Resposta do Claude" no topo (PR #7).**
 
 ## Novo: módulo de memória implementado (PR #3, `52f0c93`)
 

@@ -122,6 +122,7 @@ class Offer:
     delivery_fee_cents: int | None = None
     other_fees_cents: int | None = None
     eta_minutes: int | None = None
+    is_open: bool | None = None  # None = a fonte não informou
 
 
 @dataclass
@@ -147,6 +148,8 @@ class WorkingState:
     issues: dict[str, list[str]] = field(default_factory=dict)
     missing_data: list[str] = field(default_factory=list)
     price_ceiling_cents: int | None = None  # pedido "mais barato": só vale o que custar menos que isto
+    query_terms: tuple[str, ...] = ()  # prato pedido (ex.: "marmita", "parmegiana"); vazio = genérico
+    relevance_miss: bool = False  # nenhuma oferta corresponde ao prato pedido
 
 
 @dataclass

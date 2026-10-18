@@ -260,6 +260,14 @@ def test_closed_merchants_are_removed_even_if_search_returned_them():
     assert _map_offers({"resultKind": "ITEM", "results": [item("closed", False)]}) == []
 
 
+def test_open_filter_and_page_size_are_in_official_discovered_schema():
+    fixture = Path(__file__).parent / "fixtures" / "ifood_search_input_schema.json"
+    schema = json.loads(fixture.read_text(encoding="utf-8"))["inputSchema"]
+    properties = schema["properties"]
+    assert properties["refinements"]["properties"]["onlyOpen"]["type"] == "boolean"
+    assert "maximum 25" in properties["pageSize"]["description"]
+
+
 def test_missing_oauth_is_reported_as_auth_required():
     def handler(request):
         if request.url.path == "/experimental/tool/ids":
