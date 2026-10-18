@@ -9,6 +9,7 @@ from .intent import constraints_from_initial_context, extract_constraints, overl
 from .models import AgentResult, AgentsOutput, Constraints, SessionContext, WorkingState, tag_requirements
 from .ports import AgentRuntimePort, EventSink, KnowledgePort, MemoryPort, RevisionConflict
 from .failures import classify_failure
+from .relevance import food_terms
 from .registry import Agent, AgentContext, AgentDefinition, AgentRegistry
 
 ORCHESTRATOR_DEFINITION = AgentDefinition(
@@ -35,15 +36,17 @@ class Orchestrator:
     # ------------------------------------------------------------------
     def handle_message(self, session: SessionContext) -> AgentsOutput:
         events = EventEmitter(self._sink, session.session_id)
-        constraints, in_order, shown_total = self._build_constraints(session)
+        constraints, in_order, shown_total, stored_terms = self._build_constraints(session)
         state = WorkingState(constraints=constraints)
+        state.query_terms = food_terms(session.message_text) or stored_terms
         if wants_cheaper(session.message_text) and shown_total is not None:
             state.price_ceiling_cents = shown_total
         intent = classify(session.message_text, in_order)
         if intent != "order":  # papo: responde direto, sem agentes e sem gastar cota
             return self._chat_only(session, events, constraints, intent)
         self._persist(session.session_id, ORCHESTRATOR_ID,
-                      {"constraints": constraints.to_dict(), "conversation": {"stage": "ordering"}})
+                      {"constraints": constraints.to_dict(), "conversation": {"stage": "ordering"},
+                       "search": {"terms": list(state.query_terms)}})
         events.agent_status(ORCHESTRATOR_ID, "running", None, "Planejando atendimento")
 
         ran: set[str] = set()
@@ -66,7 +69,7 @@ class Orchestrator:
         state.missing_data = missing
         return self._finish(session.session_id, state, events, limitations)
 
-    def _build_constraints(self, session: SessionContext) -> tuple[Constraints, bool, int | None]:
+    def _build_constraints(self, session: SessionContext) -> tuple[Constraints, bool, int | None, tuple[str, ...]]:
         """initial_context < constraints persistidas < session.constraints < mensagem atual.
 
         O `initial_context` só preenche a base na PRIMEIRA vez: depois que `constraints` existe
@@ -87,7 +90,10 @@ class Orchestrator:
         shown_total = shown.get("total_cents") if isinstance(shown, dict) else None
         if not isinstance(shown_total, int) or isinstance(shown_total, bool):
             shown_total = None
-        return extract_constraints(session.message_text, merged), in_order, shown_total
+        search = state.get("search")
+        raw_terms = search.get("terms") if isinstance(search, dict) else None
+        stored_terms = tuple(t for t in raw_terms if isinstance(t, str)) if isinstance(raw_terms, list) else ()
+        return extract_constraints(session.message_text, merged), in_order, shown_total, stored_terms
 
     def _chat_only(self, session: SessionContext, events: EventEmitter, constraints: Constraints,
                    intent: str) -> AgentsOutput:
@@ -121,6 +127,9 @@ class Orchestrator:
             unverifiable = tag_requirements(state.constraints, state.offers)
             if not state.offers:
                 reason, ask = "Não encontrei ofertas disponíveis.", "Pode ajustar o pedido?"
+            elif state.relevance_miss:
+                reason = f"Não encontrei \"{' '.join(state.query_terms)}\" disponível agora perto de você."
+                ask = "Quer tentar outro prato ou descrever de outro jeito?"
             elif state.price_ceiling_cents is not None:
                 reason = ("Essa já é a opção mais barata que encontrei com o que você pediu "
                           f"({_brl(state.price_ceiling_cents)}).")
@@ -160,7 +169,8 @@ class Orchestrator:
         liked = next((r for r in rec["reasons"] if r.startswith("Combina com sua preferência")), None)
         if liked:
             text += f". {liked}"
-        notes = [w for w in rec["warnings"] if "não comprovada" in w or w.startswith("Taxa de serviço")]
+        notes = [w for w in rec["warnings"]
+                 if "não comprovada" in w or w.startswith("Taxa de serviço") or w.startswith("Não encontrei exatamente")]
         if notes:
             text += ". Atenção: " + "; ".join(notes)
         text += ". Deseja confirmar este pedido?"

@@ -9,6 +9,7 @@ from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, Constraints
                      SessionContext, WorkingState, filtered_mark, slug, soft_unverified,
                      tag_requirements)
 from .registry import AgentContext, AgentDefinition
+from .relevance import relevant
 
 MAX_RECOMMENDATIONS = 6  # candidatas; o orquestrador apresenta no máximo 3 após a personalização
 
@@ -88,8 +89,18 @@ class Planner:
         unverified = soft_unverified(c, st.offers)
         veg_enforced = "vegetarian" not in unverified
         units = c.party_size or 1
+        open_offers = [o for o in st.offers if o.is_open is not False]
+        closed = len(st.offers) - len(open_offers)
+        pool_offers, missing_terms = relevant(open_offers, st.query_terms)
+        if st.query_terms and not pool_offers:
+            st.relevance_miss = True
+            st.recommendations = []
+            limitations = [f"{closed} oferta(s) de restaurante fechado descartada(s)"] if closed else []
+            return AgentResult("planner", "needs_info", {"recommendations": 0},
+                               f"Nenhuma oferta corresponde a '{' '.join(st.query_terms)}'.", "low",
+                               limitations, [f"oferta de {' '.join(st.query_terms)}"])
         by_merchant: dict[str, list[Offer]] = defaultdict(list)
-        for o in st.offers:
+        for o in pool_offers:
             by_merchant[o.merchant_id].append(o)
         recs: list[dict[str, Any]] = []
         skipped_budget = skipped_restriction = 0
@@ -103,6 +114,9 @@ class Planner:
                 warnings: list[str] = [
                     f"Restrição '{r}' não comprovada pelo iFood (filtro de busca solicitado): "
                     "confira a descrição do item" for r in unverified]
+                if missing_terms:
+                    warnings.append(f"Não encontrei exatamente '{' '.join(sorted(missing_terms))}': "
+                                    "esta é a opção mais próxima do que você pediu")
                 rec = build_recommendation(pool[0], picked, st.data_origin, reasons, warnings)
                 known = rec["total_cents"] if rec["total_cents"] is not None else rec["subtotal_cents"]
                 if st.price_ceiling_cents is not None:
@@ -127,6 +141,8 @@ class Planner:
         st.recommendations = (firsts + [r for r in recs if r not in firsts])[:MAX_RECOMMENDATIONS]
         st.recommendations.sort(key=lambda r: (r["total_cents"] is None, r["total_cents"] or r["subtotal_cents"]))
         limitations = []
+        if closed:
+            limitations.append(f"{closed} oferta(s) de restaurante fechado descartada(s)")
         if skipped_budget:
             limitations.append(f"{skipped_budget} combinação(ões) acima do orçamento descartada(s)")
         if skipped_restriction:

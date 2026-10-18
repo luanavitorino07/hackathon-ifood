@@ -57,7 +57,9 @@ def classify(text: str, in_order: bool = False) -> Intent:
     if _MONEY_OR_PARTY.search(t) or _FOOD.search(t):
         return "order"
     if _VAGUE.search(t):
-        return "vague"
+        # "quero feijoada": verbo de pedido + algo que parece um prato vira pedido; "quero comer" segue vago.
+        from .relevance import food_terms
+        return "order" if food_terms(text) else "vague"
     if _THANKS.search(t):
         return "thanks"
     if _BYE.search(t):
