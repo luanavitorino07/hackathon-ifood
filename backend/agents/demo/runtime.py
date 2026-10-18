@@ -40,7 +40,7 @@ def _simulated_reasoning(call: RuntimeCall) -> RuntimeOutcome:
         items = _json_after("ITENS_JSON", call.prompt) or []
         judged = []
         for it in items:
-            text = slug(f"{it.get('item', '')} {it.get('restaurante', '')}")
+            text = slug(f"{it.get('item', '')} {it.get('restaurante', '')}").replace("burger", "burger-hamburguer")
             fit = "sim" if not terms or all(t[:5] in text for t in terms) else (
                 "parcial" if any(t[:5] in text for t in terms) else "nao")
             judged.append({"product_id": it.get("product_id", ""), "fit": fit,

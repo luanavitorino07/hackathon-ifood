@@ -69,6 +69,8 @@ def extract_constraints(text: str, known: Constraints) -> Constraints:
     if m:
         budget = round(float((m.group(1) or m.group(2)).replace(",", ".")) * 100)
     m = re.search(r"(\d+|" + "|".join(_NUMBERS) + r")\s+(?:pessoas|pessoa)", t)
+    if not m:  # "feijoada pra 2", "pizza para dois" (sem a palavra pessoas; não confunde com valores)
+        m = re.search(r"\b(?:pra|para)\s+(\d{1,2}|" + "|".join(_NUMBERS) + r")\b(?!\s*(?:reais|real|conto|pila|r\$|[.,]\d))", t)
     if m:
         party = int(m.group(1)) if m.group(1).isdigit() else _NUMBERS[m.group(1)]
     if "vegetarian" in t:

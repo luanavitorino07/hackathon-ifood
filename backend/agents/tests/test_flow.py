@@ -403,6 +403,17 @@ MARMITA_PARME = _offer("m2", "Marmita Parmegiana de Carne", 2490, "Restaurante B
 PEDIDO = "quero marmita parmegiana pra 2 pessoas por 100 conto no maximo, busque melhor preço"
 
 
+class PartySizeTest(unittest.TestCase):
+    def test_party_without_the_word_pessoas(self):
+        from backend.agents.intent import extract_constraints
+        cases = {"quero feijoada pra 2 até R$ 150": (2, 15000), "pizza para dois": (2, None),
+                 "quero 2 pessoas": (2, None), "lanche pra 2 reais": (None, 200), "para hoje": (None, None),
+                 "quero comida pra 4 pessoas até R$ 120": (4, 12000)}
+        for text, (party, budget) in cases.items():
+            c = extract_constraints(text, Constraints())
+            self.assertEqual((c.party_size, c.budget_cents), (party, budget), text)
+
+
 class RelevanceTest(unittest.TestCase):
     def ask(self, offers, text=PEDIDO):
         runtime = FakeRuntime(offers=offers)
