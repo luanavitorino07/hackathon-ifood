@@ -4,6 +4,27 @@
 > (`3e558d8`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 > As seções anteriores foram preservadas abaixo como histórico.
 
+## Novo: memória do cliente na `main` (Claude, PRs #12 e #13 — `4275a17`, `6c26ed6`)
+
+- **`SQLiteCustomerMemory`** (porta `CustomerMemoryPort` em `backend/agents/ports.py`), em
+  `backend/memory/customer_memory.py`: guarda por `(tenant_id, client_id)` só prato, quantidade, orçamento,
+  atendimento e data — sem nome/contato/endereço. São **pedidos feitos ao bot, não compras confirmadas**.
+  Calcula favoritos (prato em 2+ atendimentos), último pedido e orçamento típico por pessoa; `forget()` apaga.
+- **No bot:** atendimento novo + "oi" → "Oi de novo! Da última vez você pediu X. Quer pedir o mesmo?";
+  "quero o mesmo"/"de novo"/"o de sempre" repete prato, quantidade e orçamento; o estrategista prioriza o
+  favorito (`pattern_identified`, `basis: "stated_preference"`); o gestor recebe `memory_changed`
+  (`scope: "customer"`). Sessões sem `client_id` não são lembradas. O histórico fictício DEMO só entra
+  quando não há histórico real.
+- **Sem mudança na API:** `build_orchestrator` liga a memória do cliente padrão (uma por processo, em
+  memória — vale enquanto a API estiver no ar, suficiente para a apresentação). Na demo, todas as sessões
+  usam `client_demo_1`, então formam um histórico só.
+- Testes: agentes 110 OK (11 novos), memória OK, API/integrations 114 passed, aceite 6/6. Pela API:
+  atendimento 1 "pizza para 2" → atendimento 2 "oi" cita a pizza → "quero o mesmo" recomenda pizza para 2.
+- **PR #13:** removidos 6 `.pyc` de `backend/memory/__pycache__` que entraram por engano (bloqueavam
+  `git pull`) e criado `backend/memory/.gitignore`. **Se o seu `git pull` reclamar de `.pyc` em
+  `backend/memory`, rode `git checkout -- backend/memory/__pycache__ backend/memory/tests/__pycache__`
+  e puxe de novo** (são só cache).
+
 ## Decisões do Gabriel e prioridades até a apresentação (18/10/2026)
 
 Para o Codex do Lorenzo. Substitui prioridades anteriores onde houver conflito.
