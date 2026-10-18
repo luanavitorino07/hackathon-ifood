@@ -85,7 +85,7 @@ Mensagens seguintes do mesmo atendimento reaproveitam a última pesquisa, **sem 
 assinatura não mudou: prato (`search.terms`), restrições alimentares, localização do `initial_context` e
 modo. Mudar só quantidade de pessoas, orçamento ou pedir "mais barato" replaneja com as mesmas ofertas
 (`candidates` na memória). Nova busca quando: prato, restrição, localização ou modo mudam; a pesquisa tem
-mais de 10 min (`SEARCH_TTL_S`, não congela preço/disponibilidade); o cliente pede ("busca de novo",
+mais de 5 min (`SEARCH_TTL_S`, igual às evidências da integração; não congela preço/disponibilidade); o cliente pede ("busca de novo",
 "outras opções"); a anterior falhou ou veio vazia; ou a sessão é `real` e os dados guardados não são
 `ifood_mcp`. Memória: `last_search` = `{signature, at, count}`, gravado só após pesquisa bem-sucedida.
 O gestor vê `agent_message` "Pesquisa reaproveitada, sem nova busca".

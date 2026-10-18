@@ -14,7 +14,7 @@ from typing import Any
 from .models import Constraints, Offer, SessionContext
 from .researcher import parse_offers
 
-SEARCH_TTL_S = 600  # 10 minutos
+SEARCH_TTL_S = 300  # 5 minutos (igual à validade das evidências de busca da integração)
 _REFRESH = re.compile(
     r"\b(atualiz|busca\w* de novo|procur\w* de novo|pesquis\w* de novo|busca\w* novamente|"
     r"procur\w* novamente|outras opc|mais opc|novas opc|outro restaurante|outros restaurantes)")

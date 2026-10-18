@@ -33,7 +33,10 @@ _NOT_FOOD = {
     "dinheiro", "troco", "endereco", "rua", "faz", "fazem", "tenho", "temos", "precisa", "preciso",
     "quer", "queremos", "seja", "fosse", "tudo", "todo", "toda", "cada", "muito", "pouco", "bem",
     "show", "top", "legal", "massa", "fechou", "ok", "okay", "aqui", "agorinha", "logo", "dps", "depois",
+    "pfv", "pf", "por", "favor", "vlw", "obg", "vem", "manda", "ver", "veja", "conto", "contos",
 }
+# "sem cebola", "extra queijo": personalização, não o prato (o cardápio ainda precisa confirmar).
+_MODIFICATION = re.compile(r"\b(?:sem|extra|adicional|adicionais|retirar|tirar|adicionar|acrescentar)\b[^,;.]*")
 _PREFIX = 5  # "marmita" casa com "marmitaria"; "pizza" com "pizzaria"
 
 
@@ -45,7 +48,8 @@ def _words(text: str) -> list[str]:
 def food_terms(text: str) -> tuple[str, ...]:
     """Termos que descrevem o prato pedido; vazio se o texto não citar um prato ("quero comida")."""
     seen: dict[str, None] = {}
-    for w in _words(text):
+    plain = unicodedata.normalize("NFKD", text.lower()).encode("ascii", "ignore").decode()
+    for w in _words(_MODIFICATION.sub(" ", plain)):
         if len(w) >= 3 and w not in _NOT_FOOD:
             seen.setdefault(w, None)
     return tuple(seen)
