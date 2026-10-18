@@ -17,6 +17,9 @@
   (`ScheduleTicker`, `run_due_schedules`). Os 2 testes antigos foram ajustados (10 agentes; permissões sem
   índice). Suítes: agentes 170, memória 19, API+integrações 153 ok.
 - Testado no iFood real + Haiku: "lista do mercado: arroz 5kg e café" → cesta no Oba Hortifruti São Carlos.
+- **PR #22:** **custo de IA por cliente** na Análise financeira (tokens, custo US$/R$, vendido, % da venda e
+  lucro estimado). Custo vem do OpenCode; câmbio (`APP_USD_BRL_RATE`) e margem DEMO são parâmetros.
+  **Contrato:** novo `GET /api/v1/admin/ai-usage` (gestor) e `overview.estimated_ai_cost_cents` preenchido.
 - **PR #20:** comida com bebida + acompanhamento ("parmegiana com coca e batata frita") saía só com um. Agora o
   Pesquisador procura o complemento dentro do restaurante do prato e a opção completa vem primeiro. Testado no real.
 - **PR #19 (correção):** "adiciona detergente" deixava a cesta só com arroz (IA julgava só parte de 100
