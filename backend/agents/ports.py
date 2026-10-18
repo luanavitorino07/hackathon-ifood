@@ -91,3 +91,20 @@ class EventSink(Protocol):
         visibility: Literal["admin", "customer", "both"],
         payload: dict[str, Any],
     ) -> None: ...
+
+
+# ---- conhecimento comercial (RAG) ---------------------------------------------------
+@dataclass(frozen=True)
+class KnowledgeHit:
+    document_id: str
+    title: str
+    excerpt: str  # trecho recuperado (texto do documento, nunca dado de cliente)
+    score: float
+    data: dict[str, Any] = field(default_factory=dict)  # parâmetros estruturados do trecho, se houver
+
+
+@runtime_checkable
+class KnowledgePort(Protocol):
+    """Busca em documentos comerciais da empresa (políticas, estratégias). Implementação: backend/memory."""
+
+    def search(self, tenant_id: str, query: str, topics: tuple[str, ...] = (), k: int = 3) -> list[KnowledgeHit]: ...
