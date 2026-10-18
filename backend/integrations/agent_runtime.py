@@ -126,6 +126,7 @@ class OpenCodeAgentRuntime:
         self._client_factory = client_factory or (lambda: OpenCodeClient(settings))
         self._evidence = evidence_store or SearchEvidenceStore()
         self._include_closed_for_testing = include_closed_for_testing
+        self._quota_until = 0.0
 
     def recommendation_warnings(
         self,
@@ -169,6 +170,8 @@ class OpenCodeAgentRuntime:
         )
 
     async def _execute(self, call: _RuntimeCallLike) -> _ExecutionResult:
+        if monotonic() < self._quota_until:
+            return _failure("quota", "quota_exceeded", retry_after_s=30)
         if not call.allowed_tools and call.max_tool_calls == 0:
             return await self._execute_reasoning(call)
         if _LOGICAL_TOOL not in call.allowed_tools:
@@ -195,6 +198,7 @@ class OpenCodeAgentRuntime:
             session_id = await client.create_session(title=f"{call.agent_id}:{call.task_id}"[:120])
             response = await client.run_prompt(
                 session_id,
+                agent=self._settings.search_agent,
                 system=call.system,
                 prompt=_build_search_prompt(
                     call.prompt,
@@ -275,6 +279,8 @@ class OpenCodeAgentRuntime:
                 except Exception:
                     pass
             retry_after = 30 if isinstance(exc, QuotaError) else None
+            if retry_after is not None:
+                self._quota_until = monotonic() + retry_after
             return _failure(exc.code, _safe_detail(exc), retry_after_s=retry_after)
         except (TypeError, ValueError, KeyError, json.JSONDecodeError):
             return _failure("invalid_output", "invalid_mcp_response")
@@ -282,7 +288,7 @@ class OpenCodeAgentRuntime:
             await client.aclose()
 
     async def _execute_reasoning(self, call: _RuntimeCallLike) -> _ExecutionResult:
-        """Executa raciocínio estruturado dos agentes sem liberar nenhuma ferramenta."""
+        """Raciocínio sem MCP: só a ferramenta interna de serialização do JSON."""
 
         client = self._client_factory()
         session_id = None
@@ -293,9 +299,10 @@ class OpenCodeAgentRuntime:
             )
             response = await client.run_prompt(
                 session_id,
+                agent=self._settings.reasoning_agent,
                 system=call.system,
                 prompt=call.prompt,
-                tools={"*": False},
+                tools={"*": False, "StructuredOutput": True},
                 output_schema=call.output_schema,
                 timeout_seconds=call.timeout_s,
             )
@@ -313,6 +320,8 @@ class OpenCodeAgentRuntime:
                 except Exception:
                     pass
             retry_after = 30 if isinstance(exc, QuotaError) else None
+            if retry_after is not None:
+                self._quota_until = monotonic() + retry_after
             return _failure(exc.code, _safe_detail(exc), retry_after_s=retry_after)
         except (TypeError, ValueError, KeyError, json.JSONDecodeError):
             return _failure("invalid_output", "invalid_model_output")
@@ -444,29 +453,16 @@ def _build_search_prompt(
         if dietary
         else "Não envie refinements.itemRestrictions. "
     )
-    availability_instruction = (
-        "Retorne apenas lojas abertas agora. "
-        if only_open
-        else "Este é um teste local: inclua também lojas fechadas, sem afirmar que estão "
-        "disponíveis para pedido. "
-    )
     return (
-        "Execute exatamente uma chamada à tool searchOffers do MCP do iFood. "
-        "Busque itens (resultKind ITEM), nunca merchants. Use exatamente "
+        "Uma chamada searchOffers: resultKind=ITEM, merchantType=RESTAURANT, "
+        "pageSize=20, refinements.sort=RELEVANCE. Use exatamente "
         f"userLocation={json.dumps(dict(location), ensure_ascii=False)}. "
         f"{dietary_instruction}"
         f"Use refinements.onlyOpen={'true' if only_open else 'false'}. "
-        f"{availability_instruction}"
-        "Não use localização inferida e não chame outras tools. "
-        "A query deve preservar o prato e qualificadores explícitos do pedido: "
-        "não reduza um prato específico ao ingrediente, não substitua por similares "
-        "e não use uma lista fixa de comidas. Preserve pedidos de personalização "
-        "como pedidos ainda não confirmados; não invente ingredientes ou adicionais. "
-        "Não afirme que uma loja está aberta, próxima ou personaliza sem evidência. "
-        "Termos obrigatórios da query (grafias equivalentes são aceitas): "
-        f"{json.dumps(required_terms)}. "
-        "Use pageSize=20 (máximo oficial 25) e merchantType=RESTAURANT. "
-        "Depois da ferramenta, responda somente OK. Pedido:\n"
+        "Preserve o prato na query, sem pessoas/orçamento; não troque por ingrediente ou sabor. "
+        f"Termos obrigatórios: {json.dumps(required_terms)}. "
+        "Sem outras tools, inferência de endereço ou personalização não confirmada. "
+        "Após a ferramenta responda só OK. Pedido:\n"
         f"{agent_prompt}"
     )
 

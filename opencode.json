@@ -1,6 +1,22 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "model": "google/gemini-3.8-flash",
+  "agent": {
+    "ifood-search": {
+      "description": "Busca de comida para o backend",
+      "mode": "primary",
+      "prompt": "Execute somente a busca de comida solicitada. Use apenas a ferramenta autorizada, uma vez. Após receber o resultado, responda OK sem repetir o catálogo.",
+      "steps": 3,
+      "permission": {"*": "deny", "ifood_searchOffers": "allow"}
+    },
+    "ifood-reasoning": {
+      "description": "Decisões estruturadas dos especialistas de comida",
+      "mode": "primary",
+      "prompt": "Resolva somente a tarefa fornecida usando os fatos recebidos. Seja breve. Retorne o resultado pelo StructuredOutput; não consulte ferramentas externas.",
+      "steps": 2,
+      "permission": {"*": "deny", "StructuredOutput": "allow"}
+    }
+  },
   "mcp": {
     "ifood": {
       "type": "remote",

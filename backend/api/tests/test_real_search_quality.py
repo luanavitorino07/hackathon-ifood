@@ -15,7 +15,7 @@ from backend.integrations.config import (
     OpenCodeSettings,
     SandboxLocation,
 )
-from backend.integrations.opencode_client import OpenCodeRunResult
+from backend.integrations.opencode_client import OpenCodeClient, OpenCodeRunResult
 from backend.integrations.search_quality import (
     AVAILABILITY_UNKNOWN,
     CLOSED_TEST_ONLY,
@@ -320,6 +320,113 @@ def test_curator_rejects_pastel_de_pizza_from_pizza_results():
     asyncio.run(scenario())
     assert len(mock.calls) == 1
     assert any("Curador" in call.get("system", "") for call in mock.reasoning_calls)
+
+
+def test_http_curation_uses_actual_opencode_wire_format_and_no_reasoning_history_get():
+    """Exercise the HTTP adapter too: mocks of run_prompt hid the 1.19.3 regression."""
+    search_items = [
+        item("Pizza Grande Margherita", "pizza", "pizzaria", 35),
+        item("Pastel de Pizza", "pastel", "pastelaria", 12),
+        item("Esfiha sabor pizza", "esfiha", "esfiharia", 8.99),
+        item("Pizza", "flavor", "esfiharia", 8.99),
+    ]
+    search_part = None
+    reasoning_requests = []
+    permissions = []
+
+    def handler(request):
+        nonlocal search_part
+        if request.method == "GET":
+            if request.url.path == "/experimental/tool/ids":
+                return httpx.Response(200, json=["ifood_searchOffers"])
+            # Only the non-structured search may request intermediate tool results.
+            assert search_part is not None
+            assert request.url.path == "/session/search/message"
+            return httpx.Response(200, json=[{
+                "info": {"role": "assistant", "parentID": "search_user"},
+                "parts": [search_part],
+            }])
+        body = json.loads(request.content)
+        if request.url.path == "/session":
+            permissions.append(body["permission"])
+            is_search = any(p["permission"] == "ifood_searchOffers" for p in body["permission"])
+            return httpx.Response(200, json={"id": "search" if is_search else "reasoning"})
+        if body["agent"] == "ifood-search":
+            location = json.loads(re.search(r"userLocation=(\{.*?\})", body["parts"][0]["text"])[1])
+            search_part = {
+                "type": "tool", "tool": "ifood_searchOffers", "callID": "live_shape_search",
+                "state": {
+                    "status": "completed",
+                    "input": {"query": "pizza", "resultKind": "ITEM", "userLocation": location,
+                              "refinements": {"onlyOpen": True}},
+                    "output": json.dumps({"resultKind": "ITEM", "results": search_items}),
+                },
+            }
+            return httpx.Response(200, json={
+                "info": {"id": "search_result", "parentID": "search_user"}, "parts": [],
+            })
+        assert body["agent"] == "ifood-reasoning"
+        assert body["tools"] == {"*": False, "StructuredOutput": True}
+        assert body["format"]["type"] == "json_schema"
+        reasoning_requests.append(body)
+        if "Curador" in body["system"]:
+            structured = {"items": [
+                {"product_id": product["itemId"],
+                 "fit": "sim" if product["itemId"] == "pizza" else "nao",
+                 "reason": "prato correto" if product["itemId"] == "pizza" else "outro prato"}
+                for product in search_items
+            ]}
+        else:
+            # Other agents may use their existing fallback without affecting curation.
+            structured = {}
+        return httpx.Response(200, json={
+            "info": {"id": "reasoning_result", "parentID": "reasoning_user",
+                     "structured": structured},
+            "parts": [{"type": "tool", "tool": "StructuredOutput", "state": {
+                "status": "completed", "input": structured, "metadata": {"valid": True},
+            }}],
+        })
+
+    settings = OpenCodeSettings()
+    clients = []
+
+    def client_factory():
+        client = httpx.AsyncClient(
+            base_url="http://oc.test", transport=httpx.MockTransport(handler)
+        )
+        clients.append(client)
+        return OpenCodeClient(settings, client=client)
+
+    runtime = OpenCodeAgentRuntime(
+        settings, sandbox_location=SandboxLocation(-23.55, -46.63), client_factory=client_factory,
+    )
+    app = build_application(runtime=runtime, runtime_mode="real", memory_backend="ephemeral")
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app), base_url="http://test"
+        ) as client:
+            sid = (await client.post("/api/v1/sessions", json={"client_id": None})).json()[
+                "session_id"
+            ]
+            sent = await client.post("/api/v1/chat/messages", json={
+                "session_id": sid, "client_message_id": "wire_regression",
+                "text": "Quero pizza para 2 pessoas até R$ 150",
+                "input_mode": "text", "transcription_id": None,
+            })
+            assert sent.status_code == 202
+            recs = (await client.get(f"/api/v1/sessions/{sid}/snapshot")).json()["recommendations"]
+            assert recs
+            assert {i["product_id"] for rec in recs for i in rec["items"]} == {"pizza"}
+        for client in clients:
+            await client.aclose()
+
+    asyncio.run(scenario())
+    assert reasoning_requests
+    assert permissions[1] == [
+        {"permission": "*", "pattern": "*", "action": "deny"},
+        {"permission": "StructuredOutput", "pattern": "*", "action": "allow"},
+    ]
 
 
 def test_http_preserves_verified_delivery_and_catalog_details():

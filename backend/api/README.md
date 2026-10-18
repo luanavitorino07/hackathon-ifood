@@ -34,6 +34,40 @@ contexto compartilhado e isolamento de eventos HTTP/SSE entre comprador e gestor
 
 ## Qualidade e limites da busca
 
+O `opencode.json` registra dois agentes enxutos: `ifood-search` e `ifood-reasoning`.
+O backend os seleciona explicitamente para evitar o prompt de programação do agente
+`build`. As variáveis `OPENCODE_SEARCH_AGENT`/`OPENCODE_REASONING_AGENT` permitem
+selecionar outros agentes já configurados. Reinicie a API e recarregue/reinicie o
+OpenCode depois de atualizar o código/configuração.
+
+No OpenCode 1.19.3, `format: json_schema` usa a ferramenta interna `StructuredOutput`.
+Ela fica habilitada no raciocínio, com MCP e outras ferramentas negados. O cliente
+lê `info.structured` (mantendo compatibilidade com `structured_output`) e, como
+reserva, a entrada de `StructuredOutput` concluída com `metadata.valid=true`.
+Não consulta o histórico de mensagens dessas sessões: esse endpoint tem um erro
+de serialização com `format` nessa versão. Busca continua usando somente evidência MCP.
+
+Regressão ao vivo, opt-in, com itens sintéticos (PowerShell; uma chamada de IA, sem busca iFood):
+
+```text
+$env:RUN_LIVE_OPENCODE = "1"
+python -m pytest backend/integrations/tests/test_live_curator.py::test_real_curator_distinguishes_dish_from_flavor_and_reports_usage -q -s
+```
+
+Em 18/10, OpenCode 1.19.3/Gemini: pizza grande aceita; pastel de pizza, esfiha sabor
+pizza e "Pizza" de esfiharia rejeitados. Consumo medido: 1.708 tokens de entrada +
+157 de saída = 1.865, contra ~8.400 por raciocínio no teste anterior do Claude.
+As entradas diferem, portanto isso não é uma economia percentual garantida por pedido.
+O teste HTTP offline também passa pelo cliente OpenCode real com transporte simulado,
+reproduzindo o formato da resposta e o erro potencial de GET do histórico.
+
+Quando o OpenCode entra em retry por cota, o cliente detecta isso no status local e
+aborta a chamada, retornando `quota`. O runtime suspende novas chamadas por 30 s,
+evitando repetições pelos especialistas seguintes. Isso não renova a cota do provedor.
+Teste real com cota esgotada: 2,52 s na primeira chamada, 0,016 s na seguinte.
+A nova validação completa com catálogo ficou bloqueada por essa cota; não confundir
+o teste real do Curador com um novo aceite completo de busca e recomendação.
+
 O runtime real protege a especificidade do pedido com uma guarda lexical na query:
 ela deve manter os termos de `Produto desejado:` que o pesquisador envia. Os itens
 retornados não são descartados antecipadamente só pelo nome. O Curador julga a

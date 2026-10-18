@@ -4,6 +4,50 @@
 > (`3e558d8`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 > As seções anteriores foram preservadas abaixo como histórico.
 
+## Correção Codex / Lorenzo — StructuredOutput e consumo de tokens (18/10/2026)
+
+Revisada a nova `origin/main@16f7d82`; relatório incorporado à `feat/integrations`.
+As três incompatibilidades reportadas pelo Claude foram corrigidas:
+
+- Raciocínio libera **somente `StructuredOutput`**, tanto nas tools quanto na permissão da sessão;
+  MCP e demais ferramentas continuam negados para os especialistas.
+- Cliente lê `info.structured`, aceita o nome antigo `structured_output` e usa como reserva apenas
+  uma tool `StructuredOutput` concluída com `metadata.valid=true`.
+- Sessões com JSON Schema usam o corpo do POST; nenhum GET de histórico dessas sessões.
+
+`opencode.json` agora configura `ifood-search` e `ifood-reasoning`, com prompts de 152 e 151 caracteres.
+O runtime os seleciona explicitamente, em vez do `build`; o prompt adicional da busca também foi
+encurtado. Não foram removidos os especialistas nem seus guarda-corpos, nem alterado o modelo.
+O agente de busca usa três passos: em dois, OpenCode 1.19.3 injeta `MAX_STEPS_PROMPT` como uma mensagem
+de assistente **antes da resposta final da busca**, e o Gemini rejeita com HTTP 400
+`Requests ending with a model turn are not supported`. O raciocínio estruturado termina no primeiro
+passo e mantém limite de dois. Recarregar/reiniciar OpenCode e reiniciar a API ao atualizar.
+
+Validação concluída:
+
+- **283 testes offline aprovados**, 3 testes ao vivo opt-in ignorados na execução offline; lint dos
+  arquivos alterados aprovado. O teste HTTP agora usa também o cliente OpenCode real com transporte
+  simulado, cobrindo o formato correto, permissões e ausência de GET no raciocínio.
+- **Curador no OpenCode 1.19.3/Gemini real**, com itens sintéticos: aceita pizza grande e rejeita pastel
+  de pizza, esfiha sabor pizza e "Pizza" de R$ 8,99 da esfiharia. Uma chamada, sem busca iFood:
+  **1.708 tokens de entrada + 157 de saída = 1.865**, versus ~8.400 reportados no teste anterior.
+  As entradas diferem; não é um percentual garantido por pedido.
+
+A validação completa com catálogo teve uma tentativa sem resposta do modelo (timeout), depois uma
+busca MCP real com **13 resultados**, interrompida no passo final pelo erro HTTP 400 descrito acima.
+Após ajustar os passos, a continuação foi bloqueada pela **cota diária confirmada do Gemini**:
+`generate_content_free_tier_requests`, limite 20, espera informada de ~17h. Portanto **não foi
+confirmado um novo fluxo completo com catálogo + Curador + recomendação** nesta entrega.
+
+Corrigido também o tratamento dessa condição: enquanto o POST está pendente, o cliente consulta
+somente o status local da sessão a cada dois segundos. Ao detectar retry por cota, aborta a sessão e
+normaliza como `quota`, sem expor a mensagem privada do provedor. O runtime faz cooldown de 30 s para
+evitar novas chamadas dos especialistas seguintes. Teste real na cota esgotada: erro em **2,52 s**;
+segunda chamada negada localmente em **0,016 s**, em vez de novas tentativas e timeout de 40–60 s.
+
+Nenhuma edição em `backend/agents` ou `backend/memory`. Nenhum carrinho/pedido/pagamento executado.
+Código segue na branch de integrações; este registro não significa merge de código na `main`.
+
 ## 🔴 Revisão do Claude em `feat/integrations@e2f03b6` — IA dos agentes NÃO roda no modo real (18/10/2026)
 
 **Aprovado nesta entrega:** raciocínio sem ferramentas (`_execute_reasoning`), filtro por nome removido

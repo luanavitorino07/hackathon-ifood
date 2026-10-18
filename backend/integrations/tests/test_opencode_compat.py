@@ -125,7 +125,7 @@ def test_intermediate_tool_results_are_joined_only_for_current_user_message():
     assert json.loads(requests[1].content)["variant"] == "low"
 
 
-def test_reasoning_session_denies_every_tool_permission():
+def test_reasoning_session_allows_only_internal_structured_output():
     requests = []
 
     def handler(request):
@@ -143,7 +143,8 @@ def test_reasoning_session_denies_every_tool_permission():
 
     asyncio.run(scenario())
     assert json.loads(requests[0].content)["permission"] == [
-        {"permission": "*", "pattern": "*", "action": "deny"}
+        {"permission": "*", "pattern": "*", "action": "deny"},
+        {"permission": "StructuredOutput", "pattern": "*", "action": "allow"},
     ]
 
 
@@ -159,7 +160,7 @@ def test_reasoning_prompt_does_not_fetch_tool_history():
                 "info": {
                     "id": "answer",
                     "parentID": "user_1",
-                    "structured_output": {"items": []},
+                    "structured": {"items": []},
                 },
                 "parts": [],
             },
@@ -172,13 +173,102 @@ def test_reasoning_prompt_does_not_fetch_tool_history():
             result = await OpenCodeClient(OpenCodeSettings(), client=http).run_prompt(
                 "session_1",
                 prompt="julgue os itens",
-                tools={"*": False},
+                tools={"*": False, "StructuredOutput": True},
                 output_schema={"type": "object"},
             )
             assert result.structured_output == {"items": []}
 
     asyncio.run(scenario())
     assert len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    "info,parts,expected",
+    [
+        ({"structured": {"answer": "wire"}}, [], {"answer": "wire"}),
+        ({"structured_output": {"answer": "legacy"}}, [], {"answer": "legacy"}),
+        (
+            {"structured": {"answer": "wire"}, "structured_output": {"answer": "old"}},
+            [],
+            {"answer": "wire"},
+        ),
+        (
+            {},
+            [{"type": "tool", "tool": "StructuredOutput", "state": {
+                "status": "completed", "input": {"answer": "validated"},
+                "metadata": {"valid": True},
+            }}],
+            {"answer": "validated"},
+        ),
+        (
+            {},
+            [{"type": "tool", "tool": "StructuredOutput", "state": {
+                "status": "completed", "input": {"answer": "invalid"},
+                "metadata": {"valid": False},
+            }}],
+            None,
+        ),
+        (
+            {},
+            [{"type": "tool", "tool": "ifood_searchOffers", "state": {
+                "status": "completed", "input": {"answer": "external"},
+                "metadata": {"valid": True},
+            }}],
+            None,
+        ),
+    ],
+)
+def test_structured_output_wire_formats_and_validated_tool_fallback(info, parts, expected):
+    async def scenario():
+        async with httpx.AsyncClient(
+            base_url="http://oc.test",
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json={"info": {"id": "m", **info},
+                                                          "parts": parts})
+            ),
+        ) as http:
+            result = await OpenCodeClient(OpenCodeSettings(), client=http).run_prompt(
+                "sid", prompt="julgue", tools={"*": False, "StructuredOutput": True},
+                output_schema={"type": "object"},
+            )
+            assert result.structured_output == expected
+
+    asyncio.run(scenario())
+
+
+def test_quota_retry_status_aborts_without_waiting_for_prompt_timeout(monkeypatch):
+    from backend.integrations import opencode_client
+
+    monkeypatch.setattr(opencode_client, "_STATUS_POLL_SECONDS", 0.001)
+    requests = []
+
+    async def handler(request):
+        requests.append((request.method, request.url.path))
+        if request.method == "POST" and request.url.path.endswith("/message"):
+            await asyncio.Event().wait()
+        if request.url.path == "/session/status":
+            return httpx.Response(200, json={"sid": {
+                "type": "retry", "attempt": 1,
+                "message": "Quota exceeded for free tier requests; private provider details",
+            }})
+        assert request.url.path == "/session/sid/abort"
+        return httpx.Response(200, json=True)
+
+    async def scenario():
+        async with httpx.AsyncClient(
+            base_url="http://oc.test", transport=httpx.MockTransport(handler)
+        ) as http:
+            with pytest.raises(QuotaError, match="^cota do provedor de IA"):
+                await OpenCodeClient(OpenCodeSettings(), client=http).run_prompt(
+                    "sid", prompt="julgue", tools={"*": False, "StructuredOutput": True},
+                    output_schema={"type": "object"}, timeout_seconds=40,
+                )
+
+    asyncio.run(scenario())
+    assert requests == [
+        ("POST", "/session/sid/message"), ("GET", "/session/status"),
+        ("POST", "/session/sid/abort"),
+    ]
 
 
 @pytest.mark.parametrize("status,exception", [(429, QuotaError), (404, UnavailableError)])

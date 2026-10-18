@@ -155,7 +155,8 @@ def test_runtime_executes_structured_reasoning_without_tools() -> None:
     assert result.structured == {"answer": "ok"}
     assert result.traces == ()
     assert client.create_kwargs == {"title": "curator:task_1", "allow_search": False}
-    assert client.prompt_kwargs["tools"] == {"*": False}
+    assert client.prompt_kwargs["tools"] == {"*": False, "StructuredOutput": True}
+    assert client.prompt_kwargs["agent"] == "ifood-reasoning"
     assert client.prompt_kwargs["output_schema"] == _reasoning_call().output_schema
     assert client.prompt_kwargs["timeout_seconds"] == 40.0
     assert client.closed is True
@@ -171,6 +172,29 @@ def test_runtime_rejects_invalid_structured_reasoning_output() -> None:
     assert result.error == "invalid_output"
     assert result.detail == "invalid_model_output"
     assert client.closed is True
+
+
+def test_quota_cooldown_avoids_calls_from_following_specialists(monkeypatch):
+    from backend.integrations import agent_runtime
+
+    clock = [100.0]
+    monkeypatch.setattr(agent_runtime, "monotonic", lambda: clock[0])
+    clients_created = []
+    client = _ReasoningOpenCode({"answer": "ok"}, error=QuotaError("quota"))
+
+    def factory():
+        clients_created.append(client)
+        return client
+
+    runtime = OpenCodeAgentRuntime(OpenCodeSettings(), client_factory=factory)
+    assert runtime.run(_reasoning_call()).error == "quota"
+    client.error = None
+    clock[0] = 101
+    assert runtime.run(_reasoning_call()).error == "quota"
+    assert len(clients_created) == 1
+    clock[0] = 131
+    assert runtime.run(_reasoning_call()).ok
+    assert len(clients_created) == 2
 
 
 @pytest.mark.parametrize(
@@ -263,6 +287,7 @@ def test_runtime_maps_raw_mcp_output_and_ignores_model_structured_output() -> No
     }
     assert '"latitude": -23.55' in client.prompt_kwargs["prompt"]
     assert client.prompt_kwargs["timeout_seconds"] == 60.0
+    assert client.prompt_kwargs["agent"] == "ifood-search"
     assert client.closed is True
 
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import re
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Self
@@ -11,11 +13,14 @@ import httpx
 
 from .config import OpenCodeSettings
 from .errors import (
+    IntegrationError,
     InvalidOutputError,
     QuotaError,
     RuntimeTimeoutError,
     UnavailableError,
 )
+
+_STATUS_POLL_SECONDS = 2.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +95,11 @@ class OpenCodeClient:
                     "action": "allow",
                 }
             )
+        else:
+            # JSON Schema is implemented as this local tool in OpenCode 1.19.x.
+            body["permission"].append(
+                {"permission": "StructuredOutput", "pattern": "*", "action": "allow"}
+            )
         data = await self._request_json("POST", "/session", json=body)
         session_id = data.get("id")
         if not isinstance(session_id, str) or not session_id:
@@ -136,7 +146,7 @@ class OpenCodeClient:
             if timeout_seconds <= 0:
                 raise ValueError("timeout_seconds precisa ser maior que zero")
             request_options["timeout"] = timeout_seconds
-        data = await self._request_json("POST", f"/session/{session_id}/message", **request_options)
+        data = await self._prompt_response(session_id, request_options)
         info = data.get("info")
         if not isinstance(info, Mapping):
             raise InvalidOutputError("resposta de mensagem inválida do OpenCode")
@@ -146,8 +156,12 @@ class OpenCodeClient:
         # OpenCode may return only the final assistant message; tool calls live
         # in intermediate messages sharing the same user-message parent.
         parent_id = info.get("parentID")
-        tools_enabled = tools is not None and any(tools.values())
-        if isinstance(parent_id, str) and tools_enabled:
+        external_tools_enabled = tools is not None and any(
+            enabled for name, enabled in tools.items() if name != "StructuredOutput"
+        )
+        # The history endpoint fails to serialize format=json_schema in 1.19.3.
+        # Reasoning already returns its result in the POST body.
+        if isinstance(parent_id, str) and external_tools_enabled and output_schema is None:
             messages = await self._request_json("GET", f"/session/{session_id}/message")
             if not isinstance(messages, list):
                 raise InvalidOutputError("histórico de execução inválido do OpenCode")
@@ -178,7 +192,7 @@ class OpenCodeClient:
         return OpenCodeRunResult(
             session_id=session_id,
             message_id=message_id,
-            structured_output=info.get("structured_output"),
+            structured_output=_structured_output(info, data.get("parts", [])),
             raw_response=data,
         )
 
@@ -187,6 +201,37 @@ class OpenCodeClient:
         if not isinstance(data, bool):
             raise InvalidOutputError("resposta de cancelamento inválida do OpenCode")
         return data
+
+    async def _prompt_response(self, session_id: str, request_options: dict[str, Any]) -> Any:
+        """Stop OpenCode's automatic provider retries as soon as quota is known."""
+
+        pending = asyncio.create_task(
+            self._request_json("POST", f"/session/{session_id}/message", **request_options)
+        )
+        try:
+            while True:
+                done, _ = await asyncio.wait({pending}, timeout=_STATUS_POLL_SECONDS)
+                if done:
+                    return pending.result()
+                try:
+                    states = await self._request_json("GET", "/session/status", timeout=3)
+                except IntegrationError:
+                    # Older servers may not implement the status endpoint.
+                    return await pending
+                state = states.get(session_id, {}) if isinstance(states, Mapping) else {}
+                message = str(state.get("message", "")) if isinstance(state, Mapping) else ""
+                if isinstance(state, Mapping) and state.get("type") == "retry" and re.search(
+                    r"quota|resource.exhausted|rate.limit|\b429\b", message, re.IGNORECASE
+                ):
+                    try:
+                        await self.abort_session(session_id)
+                    except IntegrationError:
+                        pass
+                    raise QuotaError("cota do provedor de IA temporariamente excedida")
+        finally:
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
 
     async def mcp_status(self) -> dict[str, Any]:
         data = await self._request_json("GET", "/mcp")
@@ -292,3 +337,22 @@ def _decode_sse_data(lines: list[str]) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise InvalidOutputError("evento SSE do OpenCode precisa ser um objeto")
     return value
+
+
+def _structured_output(info: Mapping[str, Any], parts: Any) -> Any:
+    """Read the wire format, retaining compatibility with older OpenCode servers."""
+
+    for key in ("structured", "structured_output"):
+        if info.get(key) is not None:
+            return info[key]
+    if isinstance(parts, list):
+        for part in reversed(parts):
+            if not isinstance(part, Mapping) or part.get("tool") != "StructuredOutput":
+                continue
+            state = part.get("state")
+            if not isinstance(state, Mapping) or state.get("status") != "completed":
+                continue
+            metadata = state.get("metadata")
+            if isinstance(metadata, Mapping) and metadata.get("valid") is True:
+                return state.get("input")
+    return None
