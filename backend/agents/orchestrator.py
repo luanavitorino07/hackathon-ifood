@@ -6,9 +6,11 @@ from typing import Any
 
 from .chat import classify, reply_for
 from .events import ORCHESTRATOR_ID, EventEmitter, new_id
-from .intent import constraints_from_initial_context, extract_constraints, overlay, wants_cheaper
+from .intent import (constraints_from_initial_context, extract_constraints, overlay, wants_cheaper,
+                     wants_repeat)
 from .models import AgentResult, AgentsOutput, Constraints, SessionContext, WorkingState, tag_requirements
-from .ports import AgentRuntimePort, EventSink, KnowledgePort, MemoryPort, RevisionConflict
+from .ports import (AgentRuntimePort, CustomerMemoryPort, CustomerProfile, EventSink, KnowledgePort,
+                    MemoryPort, RevisionConflict)
 from .failures import classify_failure
 from .relevance import food_terms
 from .resumption import reusable_offers, signature
@@ -28,9 +30,11 @@ def _brl(cents: int | None) -> str:
 
 class Orchestrator:
     def __init__(self, registry: AgentRegistry, runtime: AgentRuntimePort,
-                 memory: MemoryPort, sink: EventSink, knowledge: KnowledgePort | None = None) -> None:
+                 memory: MemoryPort, sink: EventSink, knowledge: KnowledgePort | None = None,
+                 customers: CustomerMemoryPort | None = None) -> None:
         self._registry, self._runtime, self._memory, self._sink = registry, runtime, memory, sink
-        self._knowledge = knowledge
+        self._knowledge, self._customers = knowledge, customers
+        self._current: SessionContext | None = None
 
     def catalog(self) -> list[dict[str, object]]:
         return [ORCHESTRATOR_DEFINITION.to_dict()] + self._registry.catalog()
@@ -38,14 +42,22 @@ class Orchestrator:
     # ------------------------------------------------------------------
     def handle_message(self, session: SessionContext) -> AgentsOutput:
         events = EventEmitter(self._sink, session.session_id)
+        self._current = session
         constraints, in_order, shown_total, stored_terms = self._build_constraints(session)
-        state = WorkingState(constraints=constraints)
+        profile = self._profile(session)
+        state = WorkingState(constraints=constraints, customer_profile=profile)
         state.query_terms = food_terms(session.message_text) or stored_terms
         if wants_cheaper(session.message_text) and shown_total is not None:
             state.price_ceiling_cents = shown_total
         intent = classify(session.message_text, in_order)
+        if (not state.query_terms and not in_order and profile is not None and profile.last_terms
+                and wants_repeat(session.message_text)):  # "quero o mesmo": último pedido do cliente
+            state.query_terms = profile.last_terms
+            state.constraints = constraints = overlay(
+                Constraints(profile.last_budget_cents, profile.last_party_size), constraints)
+            intent = "order"
         if intent != "order":  # papo: responde direto, sem agentes e sem gastar cota
-            return self._chat_only(session, events, constraints, intent)
+            return self._chat_only(session, events, constraints, intent, profile)
         self._persist(session.session_id, ORCHESTRATOR_ID,
                       {"constraints": constraints.to_dict(), "conversation": {"stage": "ordering"},
                        "search": {"terms": list(state.query_terms)}})
@@ -106,10 +118,29 @@ class Orchestrator:
         stored_terms = tuple(t for t in raw_terms if isinstance(t, str)) if isinstance(raw_terms, list) else ()
         return extract_constraints(session.message_text, merged), in_order, shown_total, stored_terms
 
+    def _remember_request(self, session_id: str, state: WorkingState, events: EventEmitter) -> None:
+        """Guarda no histórico do cliente o prato pedido neste atendimento (só prato/quantidade/orçamento)."""
+        session = self._current
+        if self._customers is None or session is None or not session.client_id or not state.query_terms:
+            return
+        c = state.constraints
+        if self._customers.record_request(session.tenant_id, session.client_id, session_id, state.query_terms,
+                                          c.party_size, c.budget_cents):
+            events.memory_changed("customer", ["requests"],
+                                  f"Pedido registrado no histórico do cliente: {' '.join(state.query_terms)}")
+
+    def _profile(self, session: SessionContext) -> CustomerProfile | None:
+        if self._customers is None or not session.client_id:
+            return None
+        return self._customers.profile(session.tenant_id, session.client_id)
+
     def _chat_only(self, session: SessionContext, events: EventEmitter, constraints: Constraints,
-                   intent: str) -> AgentsOutput:
+                   intent: str, profile: CustomerProfile | None = None) -> AgentsOutput:
         self._persist(session.session_id, ORCHESTRATOR_ID, {"constraints": constraints.to_dict()})
         text = reply_for(intent, session.message_text)
+        if intent == "greeting" and profile is not None and profile.last_terms:
+            text = (f"Oi de novo! 😊 Da última vez você pediu {' '.join(profile.last_terms)}. "
+                    "Quer pedir o mesmo ou prefere outra coisa?")
         events.agent_status(ORCHESTRATOR_ID, "waiting", None, f"Conversa ({intent}); aguardando o cliente")
         events.assistant_message(text)
         return AgentsOutput("waiting_customer", text, [])
@@ -164,6 +195,7 @@ class Orchestrator:
         shown = best["total_cents"] if best["total_cents"] is not None else best["subtotal_cents"]
         self._persist(session_id, ORCHESTRATOR_ID,
                       {"shown": {"recommendation_id": best["recommendation_id"], "total_cents": shown}})
+        self._remember_request(session_id, state, events)
         events.recommendations_ready(approved)
         events.decision(best["recommendation_id"],
                         f"Recomendação principal: {best['merchant_name']}",

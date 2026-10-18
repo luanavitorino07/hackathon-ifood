@@ -150,6 +150,7 @@ class WorkingState:
     price_ceiling_cents: int | None = None  # pedido "mais barato": só vale o que custar menos que isto
     query_terms: tuple[str, ...] = ()  # prato pedido (ex.: "marmita", "parmegiana"); vazio = genérico
     relevance_miss: bool = False  # nenhuma oferta corresponde ao prato pedido
+    customer_profile: Any = None  # CustomerProfile de atendimentos anteriores, se houver
 
 
 @dataclass

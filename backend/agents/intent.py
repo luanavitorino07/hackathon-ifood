@@ -82,3 +82,12 @@ _CHEAPER = re.compile(r"\b(mais barat|mais em conta|mais economic|menos caro|mai
 
 def wants_cheaper(text: str) -> bool:
     return bool(_CHEAPER.search(_plain(text)))
+
+
+_REPEAT = re.compile(r"\b(o mesmo|a mesma|mesma coisa|mesmo pedido|o de sempre|de novo|repet\w*|"
+                     r"igual (?:da|ao|a) ultim\w*)")
+
+
+def wants_repeat(text: str) -> bool:
+    """"Quero o mesmo", "de novo", "o de sempre": repetir o último pedido do cliente."""
+    return bool(_REPEAT.search(_plain(text)))
