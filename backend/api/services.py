@@ -184,8 +184,8 @@ class StateEventSink:
                     "message": {
                         **message,
                         "text": message["text"]
-                        + " Limites da busca: "
-                        + " ".join(self._catalog_notes.get()),
+                        + " Preço, disponibilidade e personalização precisam ser confirmados "
+                        "antes de comprar.",
                     },
                 }
         operation = self._state.publish_event(

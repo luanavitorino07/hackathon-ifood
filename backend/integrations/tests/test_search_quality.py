@@ -38,6 +38,7 @@ def offer(name, merchant="m1", product="p1", price=2590):
 def test_arbitrary_food_is_not_limited_to_a_fixed_menu(dish):
     intent = SearchIntent.from_prompt(
         f"Pedido do cliente: Quero {dish} para 2 pessoas até R$ 100\n"
+        f"Produto desejado: {dish}.\n"
         "Orçamento (centavos): 10000; pessoas: 2; preferências: ['pizza']."
     )
     intent.validate_query(dish)
@@ -46,7 +47,9 @@ def test_arbitrary_food_is_not_limited_to_a_fixed_menu(dish):
 
 
 def test_specific_dish_is_not_replaced_by_same_protein():
-    intent = SearchIntent.from_prompt("Pedido do cliente: Quero parmegiana de frango")
+    intent = SearchIntent.from_prompt(
+        "Pedido do cliente: Quero parmegiana de frango\nProduto desejado: parmegiana frango."
+    )
     for query in ("frango", "strogonoff de frango", "pizza"):
         with pytest.raises(InvalidOutputError, match="invalid_query"):
             intent.validate_query(query)
@@ -65,7 +68,8 @@ def test_specific_dish_is_not_replaced_by_same_protein():
 
 def test_no_matches_stays_empty_instead_of_showing_whole_catalog():
     selected, dropped = select_matching_offers(
-        [offer("Strogonoff de frango")], SearchIntent.from_prompt("parmegiana de frango")
+        [offer("Strogonoff de frango")],
+        SearchIntent.from_prompt("Produto desejado: parmegiana frango."),
     )
     assert selected == []
     assert dropped == 1
@@ -92,7 +96,9 @@ def test_dedup_uses_merchant_and_product_not_name():
 
 
 def test_customization_is_a_request_not_proof_of_support():
-    intent = SearchIntent.from_prompt("Quero hambúrguer sem cebola, até R$ 50")
+    intent = SearchIntent.from_prompt(
+        "Pedido do cliente: Quero hambúrguer sem cebola, até R$ 50\nProduto desejado: hamburguer."
+    )
     assert intent.customization_requested
     assert intent.matches("Hamburger artesanal")
     store = SearchEvidenceStore()
@@ -111,7 +117,7 @@ def test_customization_is_a_request_not_proof_of_support():
 
 
 def test_spelling_variation_does_not_substitute_dish():
-    intent = SearchIntent.from_prompt("parmigiana de frango")
+    intent = SearchIntent.from_prompt("Produto desejado: parmigiana frango.")
     assert intent.matches("Parmegiana de frango")
     assert not intent.matches("Strogonoff de frango")
 
@@ -139,3 +145,39 @@ def test_finite_evidence_store_limits_are_required():
         SearchEvidenceStore(max_sessions=0)
     with pytest.raises(ValueError):
         SearchEvidenceStore(ttl_seconds=0)
+
+
+@pytest.mark.parametrize(
+    "customer, product",
+    [
+        (
+            "quero marmita parmegiana pra 2 pessoas por 100 conto no maximo, busque melhor preço",
+            "marmita parmegiana",
+        ),
+        ("na verdade quero pizza", "pizza"),
+        ("tem algo mais barato?", "pizza"),
+        ("me vê um xis salada pfv", "xis salada"),
+    ],
+)
+def test_agent_product_terms_are_source_of_truth_not_conversation_words(customer, product):
+    intent = SearchIntent.from_prompt(
+        f"Pedido do cliente: {customer}\nProduto desejado: {product}. Use estes termos na query."
+    )
+    assert intent.terms == frozenset(product.split())
+    intent.validate_query(product)
+    assert intent.matches(product)
+
+
+def test_missing_product_line_is_generic_without_a_second_word_classifier():
+    intent = SearchIntent.from_prompt("Pedido do cliente: tem algo mais barato?")
+    assert intent.terms == frozenset()
+    intent.validate_query("pizza")
+
+
+def test_legacy_product_line_does_not_require_removed_ingredient_in_base_name():
+    intent = SearchIntent.from_prompt(
+        "Pedido do cliente: hamburguer sem cebola\nProduto desejado: hamburguer cebola."
+    )
+    assert intent.terms == frozenset({"hamburguer"})
+    intent.validate_query("hamburguer")
+    assert intent.customization_requested

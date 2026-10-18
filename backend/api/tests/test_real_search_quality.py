@@ -130,8 +130,9 @@ def test_http_returns_only_requested_dish_prices_and_honest_catalog_warnings(cus
             recs = snapshot["recommendations"]
             assert {r["merchant_id"] for r in recs} == {"m1", "m2"}
             reply = next(m["text"] for m in snapshot["messages"] if m["role"] == "assistant")
-            assert CUSTOMIZATION_UNKNOWN in reply
-            assert PUBLIC_LOCATION in reply
+            assert "Preço, disponibilidade e personalização precisam ser confirmados" in reply
+            assert "Limites da busca:" not in reply
+            assert PUBLIC_LOCATION not in reply  # Detalhes continuam nas recomendações abaixo.
             for rec in recs:
                 assert all(i["product_id"] != "wrong" for i in rec["items"])
                 assert all(i["unit_price_cents"] in (2590, 2990) for i in rec["items"])
@@ -185,7 +186,8 @@ def test_query_substitution_is_rejected_without_automatic_retry():
             task_id="t",
             session_id="s",
             system="",
-            prompt="Pedido do cliente: Quero parmegiana de frango",
+            prompt="Pedido do cliente: Quero parmegiana de frango\n"
+            "Produto desejado: parmegiana frango.",
             output_schema={},
             allowed_tools=("offer_search",),
         )

@@ -17,20 +17,6 @@ from typing import Any
 
 from .errors import InvalidOutputError
 
-# Linguagem do pedido, não uma lista de pratos suportados.
-_FILLER = set(
-    """
-    quero queria gostaria pedir comer encontrar encontre buscar busca procure pesquisar
-    pedido cliente por favor para pra pessoas pessoa reais centavos ate no na nos nas
-    o a os as um uma uns umas de do da dos das e ou com sem em ao meu minha me eu r
-    dois duas tres quatro cinco seis sete oito nove dez
-    voce pode poderia tem tem algum alguma algumas alguns opcoes opcao sugestoes
-    sugira mostrar mostre ver mais menos barato barata baratos baratas melhor melhores
-    perto proximo proximos aberta aberto abertos abertas agora hoje aqui local locais sao so
-    restaurante restaurantes entrega entregar comida refeicao prato pratos jantar almoco
-    orcamento valor preco limite gastar vegetariana vegetariano vegetarian vegan vegana
-""".split()
-)
 _SPELLINGS = {
     "parmigiana": "parmegiana",
     "hamburger": "hamburguer",
@@ -79,9 +65,15 @@ class SearchIntent:
         if not text:
             raise InvalidOutputError("invalid_query", retryable=False)
         plain = normalized_text(text)
-        # Retirada de ingredientes não vira prova de que o item pode ser alterado.
-        base = _BASE_MODIFICATION.sub(" ", plain)
-        return cls(text, frozenset(_tokens(base) - _FILLER), bool(_MODIFICATIONS.search(plain)))
+        # O pesquisador é dono da extração do prato. Não reinterpretar a conversa
+        # com uma segunda lista de stopwords divergente da dos agentes.
+        product = re.search(r"(?m)^Produto desejado:\s*([^.\n]+)", prompt)
+        terms = _tokens(product.group(1)) if product else set()
+        # Compatibilidade com o pesquisador anterior ao PR #8: ele ainda inclui
+        # ingredientes a retirar nos termos. Não os exigir no nome do item base.
+        modifications = " ".join(m.group(0) for m in _BASE_MODIFICATION.finditer(plain))
+        terms -= _tokens(modifications)
+        return cls(text, frozenset(terms), bool(_MODIFICATIONS.search(plain)))
 
     def validate_query(self, query: str) -> None:
         if not self.terms.issubset(_tokens(query)):
