@@ -17,6 +17,8 @@
   (`ScheduleTicker`, `run_due_schedules`). Os 2 testes antigos foram ajustados (10 agentes; permissões sem
   índice). Suítes: agentes 170, memória 19, API+integrações 153 ok.
 - Testado no iFood real + Haiku: "lista do mercado: arroz 5kg e café" → cesta no Oba Hortifruti São Carlos.
+- **PR #19 (correção):** "adiciona detergente" deixava a cesta só com arroz (IA julgava só parte de 100
+  produtos). Agora vão no máximo 6 candidatos por item e o não julgado usa a regra por palavras. Testado no real.
 
 ## PASSAGEM PARA OUTRA CONTA / SESSÃO — leia primeiro (18/10/2026, `main@b499d4b`)
 
