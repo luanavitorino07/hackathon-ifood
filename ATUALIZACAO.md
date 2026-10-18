@@ -4,6 +4,161 @@
 > (`3e558d8`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 > As seções anteriores foram preservadas abaixo como histórico.
 
+## ✅ LISTA DO LORENZO — tudo que falta atualizar (Claude, 18/10/2026, `main@e700f39`)
+
+PR #14 (agentes com IA) **já está na `main`**. Em ordem de prioridade:
+
+1. **[BLOQUEIA a IA no modo real] Runtime aceitar "chamada de raciocínio" sem ferramentas.**
+   `RuntimeCall.allowed_tools == ()` e `max_tool_calls == 0` → rodar no OpenCode com todas as tools
+   desligadas, `system=call.system`, `format: json_schema` com `call.output_schema`, respeitando `timeout_s`;
+   devolver `RuntimeOutcome(ok=True, structured=<structured_output>, tool_calls=())`. Erros iguais aos da
+   busca (`invalid_output`, `quota`, `timeout`, `unavailable`). Não passar por `SearchIntent`/`onlyOpen` nem
+   marcar `ifood_mcp`. Hoje volta `tool_not_allowed` → os agentes usam a regra de reserva. Detalhes na seção
+   "PRIORIDADE — Agentes passam a usar IA de verdade" logo abaixo.
+2. **[ÚNICA FALHA DA SUÍTE NA `main`] `backend/api/tests/test_acceptance.py:124`**: trocar
+   `len(catalog.json()["agents"]) == 6` por `== 8` (novos: `curator`, `customer_memory`). Hoje: 1 failed,
+   113 passed.
+3. **[PRONTO, falta PR] Sua `feat/integrations` (`e86492c`, `8512f8d`)** — revisada pelo Claude e aprovada:
+   gestor local no modo real (`--local-demo-admin`, só loopback) + **cookie `HttpOnly` para o SSE do
+   navegador** (testado: SSE do gestor só com cookie recebeu 26 eventos; cliente e cookie falso → 403),
+   `SQLiteMemory` padrão na API, modo de teste com lojas fechadas (pedido bloqueado com 409).
+   Faça `git merge origin/main` (sem conflitos, testado), rode a suíte e abra o PR.
+4. **[QUALIDADE] Afrouxar `SearchIntent.matches` agora que existe o Curador (IA).** Hoje o filtro por palavra
+   corta "Big Mac"/"X-Bacon" para "hamburguer" **antes** de a IA ver. Proposta: manter `validate_query`
+   (query limpa) mas não descartar itens por nome; o Curador decide relevância e o filtro por palavras dos
+   agentes vira só reserva quando a IA falhar. Combinar antes de mexer.
+5. **[OPCIONAL, só modo teste] Lojas fechadas no `--include-closed-restaurants`:** hoje o `is_open` é omitido
+   para elas aparecerem, então os agentes não conseguem preferir as abertas quando há das duas. Sugestão:
+   mandar `is_open: false` + tag de teste e os agentes rebaixam (Claude implementa a parte dos agentes).
+6. **[PARA A LUANA, registrar no README da API]** O escritório deve chamar **uma vez**
+   `GET /api/v1/admin/overview` com `X-Demo-Role: admin` (gera o cookie) e só depois abrir o `EventSource`.
+7. **[NO FINAL] Trocar o modelo do OpenCode para Claude (API Anthropic)** — `OPENCODE_PROVIDER_ID`/
+   `OPENCODE_MODEL_ID`; não precisa refazer o OAuth do iFood. Com IA em todos os agentes são ~4–5 chamadas
+   de IA por pedido; o Gemini gratuito não aguenta uma demonstração inteira.
+
+Já resolvido por você e conferido: `onlyOpen` + `is_open`, `SearchIntent` lendo `Produto desejado:`,
+aviso curto no chat, xfail da retomada retirado, TTL de 5 min.
+
+## PRIORIDADE — Agentes passam a usar IA de verdade (decisão do Gabriel, PR #14) (18/10/2026)
+
+**Decisão do Gabriel:** os agentes estavam quase só por regras (a IA só montava a busca). Agora cada
+especialista raciocina com IA e eles conversam de verdade. Regras ficam como guarda-corpo e reserva.
+
+| Agente | O que a IA faz | Guarda-corpo (código) |
+|---|---|---|
+| **Curador** (`curator`, novo) | julga se cada item do iFood é o que o cliente pediu | só itens da busca; sem IA → filtro por palavras |
+| **Memória do cliente** (`customer_memory`, novo) | responde aos outros agentes (histórico/preferências) | fatos com origem |
+| Estrategista | pergunta à Memória + estratégia (RAG); escolhe ordem e argumento | só opções aprovadas; argumento sem números |
+| Descontos | pergunta à Memória + política (RAG); decide sugerir/quanto | ≤ máximo da política; lucro no código; nunca aplica |
+| Orquestrador | escreve a resposta ao cliente | restaurante e total exatos, sem outros valores, com avisos |
+
+### → Lorenzo: o runtime precisa aceitar "chamada de raciocínio" (sem ferramentas)
+
+Hoje `OpenCodeAgentRuntime._execute` recusa qualquer `RuntimeCall` sem `offer_search`
+(`tool_not_allowed`) → os agentes caem na regra de reserva e **a IA não roda no modo real**.
+
+**Contrato (já usado pelos agentes; nada muda em `ports.py`):**
+- `RuntimeCall.allowed_tools == ()` e `max_tool_calls == 0` = **raciocínio sem ferramentas**.
+- Executar o prompt no OpenCode com **todas as ferramentas desligadas** (`tools: {"*": false}`, permissão
+  negando tudo), `system=call.system`, e saída estruturada `format: {"type": "json_schema", "schema":
+  call.output_schema}`; `timeout_s` respeitado (abortar ao estourar).
+- Devolver `RuntimeOutcome(ok=True, structured=<info.structured_output>, tool_calls=())`.
+  Se o modelo não produzir JSON válido → `ok=False, error="invalid_output"`; 429 → `quota`; etc. (mesmos erros).
+- **Não** passar por `SearchIntent`/`validate_query`/`onlyOpen` (não é busca) nem marcar `ifood_mcp`.
+- Sem PII: os prompts levam só pedido, prato, itens/preços da busca, fatos agregados do cliente.
+- Testes offline sugeridos: chamada sem ferramenta não chama `searchOffers`; JSON válido devolvido;
+  JSON inválido → `invalid_output`; 429 → `quota`.
+
+**Custo de cota:** ~4–5 chamadas de IA por pedido (curador, estrategista, descontos, resposta) + a busca.
+Com Gemini gratuito acaba rápido; serve para validar e depois trocar para Claude (item 6 das decisões).
+Retomada ("agora são 3 pessoas") reaproveita busca **e** julgamento do Curador (sem nova chamada a eles).
+
+### → Lorenzo: teste a atualizar
+`backend/api/tests/test_acceptance.py:124` conta 6 agentes; agora são **8** (`curator`, `customer_memory`).
+É a única falha da suíte API com o PR #14 (113/124 passam com `main`/`feat/integrations`).
+
+### Estado
+PR #14 **mergeado na `main`** (`e700f39`). Agentes 123 testes OK (13 novos: Curador rejeita esfiha/pastel, IA não cria item,
+reserva sem IA, desconto limitado à política, resposta com preço errado rejeitada, consultas à Memória).
+Demo offline (`python3 -m backend.agents.demo --roteiro --escritorio`) mostra a conversa com **IA SIMULADA**.
+
+## Novo: memória do cliente na `main` (Claude, PRs #12 e #13 — `4275a17`, `6c26ed6`)
+
+- **`SQLiteCustomerMemory`** (porta `CustomerMemoryPort` em `backend/agents/ports.py`), em
+  `backend/memory/customer_memory.py`: guarda por `(tenant_id, client_id)` só prato, quantidade, orçamento,
+  atendimento e data — sem nome/contato/endereço. São **pedidos feitos ao bot, não compras confirmadas**.
+  Calcula favoritos (prato em 2+ atendimentos), último pedido e orçamento típico por pessoa; `forget()` apaga.
+- **No bot:** atendimento novo + "oi" → "Oi de novo! Da última vez você pediu X. Quer pedir o mesmo?";
+  "quero o mesmo"/"de novo"/"o de sempre" repete prato, quantidade e orçamento; o estrategista prioriza o
+  favorito (`pattern_identified`, `basis: "stated_preference"`); o gestor recebe `memory_changed`
+  (`scope: "customer"`). Sessões sem `client_id` não são lembradas. O histórico fictício DEMO só entra
+  quando não há histórico real.
+- **Sem mudança na API:** `build_orchestrator` liga a memória do cliente padrão (uma por processo, em
+  memória — vale enquanto a API estiver no ar, suficiente para a apresentação). Na demo, todas as sessões
+  usam `client_demo_1`, então formam um histórico só.
+- Testes: agentes 110 OK (11 novos), memória OK, API/integrations 114 passed, aceite 6/6. Pela API:
+  atendimento 1 "pizza para 2" → atendimento 2 "oi" cita a pizza → "quero o mesmo" recomenda pizza para 2.
+- **PR #13:** removidos 6 `.pyc` de `backend/memory/__pycache__` que entraram por engano (bloqueavam
+  `git pull`) e criado `backend/memory/.gitignore`. **Se o seu `git pull` reclamar de `.pyc` em
+  `backend/memory`, rode `git checkout -- backend/memory/__pycache__ backend/memory/tests/__pycache__`
+  e puxe de novo** (são só cache).
+
+## Decisões do Gabriel e prioridades até a apresentação (18/10/2026)
+
+Para o Codex do Lorenzo. Substitui prioridades anteriores onde houver conflito.
+
+| # | Item | Decisão |
+|---|---|---|
+| 1 | Painel do gestor em modo real (403 com `X-Demo-Role: admin`) | **Prioridade 1.** Sem isso o escritório fica vazio numa apresentação com dados reais. |
+| 2 | Escritório ao vivo no navegador (SSE) | **Prioridade 2 — ver detalhe abaixo.** |
+| 3 | Variedade das opções (filtro lexical rígido) | Em aberto; combinar Lorenzo + Claude antes de mexer (ver seção de validação abaixo). |
+| 4 | `SQLiteMemory` ligada na API | **Não necessário.** A apresentação é uma execução contínua; memória temporária basta. Não priorizar. |
+| 5 | Interface conectada à API | **Aguardando a Luana (frontend).** Nada a fazer no backend até a interface existir; manter o contrato v1. |
+| 6 | Modelo de IA | **Manter Gemini durante os testes; trocar o modelo do OpenCode para Claude (API Anthropic) no final**, antes da apresentação. Não exige refazer o OAuth do iFood; muda provedor/modelo no OpenCode e `OPENCODE_PROVIDER_ID`/`OPENCODE_MODEL_ID`. Economizar chamadas reais até lá. |
+
+### Item 2 em detalhe — o navegador não manda `X-Demo-Role` no SSE
+
+O `EventSource` padrão do navegador **não permite cabeçalhos personalizados**. Então a conexão ao vivo
+`GET /api/v1/sessions/{id}/events` sai sem `X-Demo-Role: admin` e o escritório recebe só a visão de
+comprador (sem `agent_message`, `tool_activity`, `discount_proposed`...), **mesmo em modo demo**.
+`/history` e `/snapshot` via `fetch` funcionam porque aceitam cabeçalho.
+
+Opções (decidir com a Luana; a API é do Lorenzo):
+- **Cookie de gestor de demonstração** (ex.: `GET /api/v1/demo/manager-login` que define cookie
+  `HttpOnly` só em `127.0.0.1`/modo demo) — é o que o contrato recomenda (PROMPT §15.1: cookie
+  same-origin para `EventSource`). Exige rota nova → acordo de contrato.
+- **Frontend usar `fetch` + leitura de stream** em vez de `EventSource` (aceita cabeçalho; sem mudar a API).
+- **Polling de `/history?after_seq=`** como reserva.
+
+Não colocar credencial ou papel em query string (proibido no contrato).
+
+## Validação do Claude na `main` — ao vivo, São Carlos, ~05h (18/10/2026)
+
+Revisado e testado `main@6550f66` (PRs #9/#10) e publicado o ajuste do PR #11 (`1b8b95d`).
+Offline: API/integrations **114 passed, 1 skipped**; agentes e memória OK; aceite HTTP demo 6/6.
+`SearchIntent` conferido com as 4 frases da revisão: agora exige só o prato (`marmita parmegiana`,
+`pizza`, `xis salada`) e nada em pedido genérico. Chat com um único aviso curto. Aprovado.
+
+Ao vivo (`run_local --real`, OpenCode 1.19.3, `ifood connected (OAuth)`, Gemini):
+
+| Mensagem (mesma sessão) | Buscas | Tempo | Resultado |
+|---|---:|---:|---|
+| "quero marmita parmegiana pra 2 pessoas por 100 conto no maximo, busque melhor preço" | 1 | 9 s | query `"marmita parmegiana"`, `onlyOpen: true`, `sort: RELEVANCE`, `pageSize: 20`; **iFood devolveu 0** ("no results with the active filters in this area") → bot não inventa; frase agora cita o prato (PR #11) |
+| "quero hamburguer pra 2 pessoas até R$ 100" | 1 | 8 s | 20 resultados, **todos `isOpen: true`**; "2x O Seu Hambúrguer Perfeito!", R$ 35,08, `ifood_mcp` |
+| "agora são 3 pessoas" | **0** | 2 s | **retomada funcionou ao vivo**: 3x, R$ 52,62, sem chamar Gemini/iFood |
+
+Prato pedido, lojas abertas, preço unitário e reaproveitamento: **confirmados ao vivo.**
+
+### Pendente para decidir junto (Lorenzo + Claude): variedade das opções
+
+Para "hamburguer", o iFood devolveu 20 itens de 4 restaurantes (Big Mac, Rodeio do Burger King,
+X-Bacon, X-Salada...), mas **só 1 opção chegou ao cliente**: `SearchIntent.matches` exige o termo no
+nome do item, e "Big Mac"/"X-Bacon" não contêm "hamburguer". O filtro de relevância dos agentes tem a
+mesma limitação (mais branda: também aceita o nome do restaurante). É o custo do filtro rígido que
+corrigiu o caso "2 Tortas". Proposta: agora que a query vai limpa com `sort: RELEVANCE` e `onlyOpen`,
+confiar mais na relevância do iFood e filtrar só o claramente sem relação — **as duas camadas precisam
+mudar juntas**; ninguém altera sozinho. Sem lista fixa de comidas.
+
 ## Publicação confirmada na main — 18/10/2026
 
 - PR #9 integrado: https://github.com/luanavitorino07/hackathon-ifood/pull/9.

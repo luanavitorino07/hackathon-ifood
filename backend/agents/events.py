@@ -19,6 +19,7 @@ PAYLOAD_KEYS: dict[str, frozenset[str]] = {
     "recommendations_ready": frozenset({"recommendations"}),
     "error": frozenset({"code", "message", "retryable"}),
     "knowledge_retrieved": frozenset({"query_id", "topics", "sources", "count"}),
+    "memory_changed": frozenset({"scope", "keys", "summary"}),
     "pattern_identified": frozenset(
         {"pattern_id", "description", "basis", "evidence_count", "confidence"}),
     "discount_proposed": frozenset(
@@ -114,3 +115,7 @@ class EventEmitter:
                     "discount_type": "percent", "discount_bps": discount_bps,
                     "discount_cents": discount_cents, "estimated_profit_delta_cents": profit_delta_cents,
                     "status": "suggested", "requires_approval": True, "reason": reason})
+
+    def memory_changed(self, scope: str, keys: list[str], summary: str) -> None:
+        self._emit("memory_changed", agent(ORCHESTRATOR_ID), None, "admin",
+                   {"scope": scope, "keys": keys, "summary": summary})

@@ -150,6 +150,9 @@ class WorkingState:
     price_ceiling_cents: int | None = None  # pedido "mais barato": só vale o que custar menos que isto
     query_terms: tuple[str, ...] = ()  # prato pedido (ex.: "marmita", "parmegiana"); vazio = genérico
     relevance_miss: bool = False  # nenhuma oferta corresponde ao prato pedido
+    customer_profile: Any = None  # CustomerProfile de atendimentos anteriores, se houver
+    ai_fit: dict[str, tuple[str, str]] = field(default_factory=dict)  # product_id -> (sim|parcial|nao, motivo)
+    pitch: str | None = None  # argumento de venda escrito pela IA do estrategista
 
 
 @dataclass

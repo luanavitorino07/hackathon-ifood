@@ -74,6 +74,18 @@ def _same_items(a: dict[str, Any], b: dict[str, Any]) -> bool:
     return a["merchant_id"] == b["merchant_id"] and key(a) == key(b)
 
 
+def _ai_select(st: WorkingState, offers: list[Offer]) -> tuple[list[Offer], set[str]] | None:
+    """Seleção pelo julgamento da IA do Curador; None se não houver julgamento."""
+    if not st.ai_fit:
+        return None
+    fit = {o.product_id: st.ai_fit.get(o.product_id, ("parcial", ""))[0] for o in offers}
+    yes = [o for o in offers if fit[o.product_id] == "sim"]
+    if yes:
+        return yes, set()
+    partial = [o for o in offers if fit[o.product_id] == "parcial"]
+    return partial, (set(st.query_terms) or {"o prato pedido"}) if partial else set(st.query_terms)
+
+
 class Planner:
     definition = AgentDefinition(
         "planner", "Planejador de compra", "Combinação de pedidos",
@@ -83,6 +95,15 @@ class Planner:
     def should_activate(self, session: SessionContext, state: WorkingState) -> bool:
         return bool(state.offers)
 
+    @staticmethod
+    def _select(st: WorkingState, offers: list[Offer]) -> tuple[list[Offer], set[str]]:
+        by_ai = _ai_select(st, offers)
+        if by_ai is not None:
+            if not by_ai[0]:
+                st.relevance_miss = True
+            return by_ai
+        return relevant(offers, st.query_terms)  # reserva: filtro por palavras
+
     def run(self, ctx: AgentContext) -> AgentResult:
         st, c = ctx.state, ctx.state.constraints
         required = tag_requirements(c, st.offers)
@@ -91,8 +112,8 @@ class Planner:
         units = c.party_size or 1
         open_offers = [o for o in st.offers if o.is_open is not False]
         closed = len(st.offers) - len(open_offers)
-        pool_offers, missing_terms = relevant(open_offers, st.query_terms)
-        if st.query_terms and not pool_offers:
+        pool_offers, missing_terms = self._select(st, open_offers)
+        if not pool_offers and (st.query_terms or st.relevance_miss):
             st.relevance_miss = True
             st.recommendations = []
             limitations = [f"{closed} oferta(s) de restaurante fechado descartada(s)"] if closed else []

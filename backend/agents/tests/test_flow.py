@@ -101,8 +101,9 @@ class FlowTest(unittest.TestCase):
 
     def test_catalog_lists_registered_agents(self):
         orch, *_ = make("x")
-        self.assertEqual([a["agent_id"] for a in orch.catalog()][:4],
-                         ["orchestrator", "researcher", "planner", "auditor"])
+        ids = [a["agent_id"] for a in orch.catalog()]
+        self.assertEqual(ids[:5], ["orchestrator", "researcher", "curator", "planner", "auditor"])
+        self.assertIn("customer_memory", ids)
 
 
 def second_message(orch, ctx, text):
@@ -449,6 +450,10 @@ class RelevanceTest(unittest.TestCase):
     def test_generic_order_is_not_filtered(self):
         out, *_ = self.ask([TORTA, MARMITA_FRANGO], text="quero comida para 1 pessoa até R$ 100")
         self.assertTrue(out.recommendations)
+
+    def test_empty_search_names_the_dish(self):
+        out, *_ = self.ask([])
+        self.assertIn('Não encontrei "marmita parmegiana" disponível agora', out.reply_text)
 
     def test_closed_restaurant_is_excluded(self):
         closed = dict(MARMITA_PARME, is_open=False)
