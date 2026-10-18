@@ -1,7 +1,7 @@
 # Arquitetura do Escritório Virtual Multiagente — iFood
 
-> Texto para o documento final (PDF). Descreve a arquitetura em vigor em 18/10/2026: os agentes, como
-> conversam entre si, o que é IA e o que é regra, e os limites honestos do que foi entregue.
+> Texto para o documento final (PDF), focado nos agentes. A arquitetura inteira (frontend, API, integrações,
+> memória, contrato, execução e testes) está em `docs/ARQUITETURA_COMPLETA.md`.
 
 ## 1. Visão geral
 
@@ -77,7 +77,8 @@ cada dado. Permite "quero o mesmo da última vez". Sem histórico, ela diz isso;
 ### Pesquisador (busca no iFood)
 É o único agente que consulta o iFood, pela ferramenta MCP `searchOffers`.
 
-- **Comida:** busca o prato e, se o cliente pediu, faz uma busca extra para cada complemento ("com coca").
+- **Comida:** busca o prato e, se o cliente pediu, cada complemento ("com coca e batata frita"). O que faltar
+  num restaurante do prato é procurado **dentro** desse restaurante, para o pedido sair de uma loja só.
 - **Mercado:** faz uma busca por item da lista em supermercados. Depois procura os itens que faltaram
   **dentro do mercado que mais cobriu a lista**, para a cesta sair de uma loja só, com uma entrega.
 
