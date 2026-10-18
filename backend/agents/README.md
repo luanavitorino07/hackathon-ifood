@@ -102,6 +102,21 @@ Eventos de agentes: `visibility="admin"`; resposta ao cliente e recomendações:
 `data_origin`, `proposals`, `audit` (`approved`, `issues`). O módulo de memória
 pode guardá-las como JSON opaco.
 
+## Modo demonstração offline (plano B)
+Roda **sem API, MCP, Gemini ou internet**, com catálogo FICTÍCIO (`demo/catalog.py`) e runtime simulado
+(`demo/runtime.py`, `provider="demo"`):
+
+```bash
+python3 -m backend.agents.demo                 # conversa interativa no terminal
+python3 -m backend.agents.demo --roteiro       # conversa pronta, para apresentar
+python3 -m backend.agents.demo --escritorio    # mostra a comunicação entre os agentes (visão do gestor)
+python3 -m backend.agents.demo --sem-tags      # imita o iFood real: sem tags de dieta nem taxa de serviço
+python3 -m backend.agents.demo --falha quota   # demonstra o tratamento de falha
+python3 -m backend.agents.demo --preferencia pizza --restricao vegetariana
+```
+
+`DemoCatalogRuntime` também implementa `AgentRuntimePort` e pode ser usado pela API no lugar do runtime real.
+
 ## Só para teste
 `testing/fakes.py` (`FakeRuntime`, `InMemoryMemory`, `RecordingSink`) é **simulado**: seus
 dados saem com `provider="demo"`/`data_origin="demo"` e nunca são promovidos a `ifood_mcp`.
