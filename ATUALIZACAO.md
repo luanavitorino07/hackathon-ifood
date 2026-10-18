@@ -1,5 +1,123 @@
 # Atualização do projeto — 18/10/2026
 
+## ESTADO ATUAL — leia esta seção antes de qualquer relatório histórico
+
+**Atualizado pelo Codex local a pedido de Gabriel. Este bloco substitui diagnósticos,
+prioridades e pendências antigas que conflitem com ele. O histórico abaixo foi mantido
+para rastreabilidade, não como lista de tarefas atuais.**
+
+### Lorenzo / Codex: o bloqueio antigo da “pizza da esfiharia” foi corrigido
+
+O diagnóstico de `e2f03b6` dizia que o Curador não conseguia chamar a IA e caía no
+filtro lexical, deixando passar “Pizza” de R$ 8,99 da esfiharia e “Pastel de Pizza”.
+**Não tratar esse diagnóstico como estado da main atual.**
+
+- Correção do runtime: **`8acbc27`**, feita pelo Codex/Lorenzo.
+- Merge na main autorizado por Gabriel: **`d77049a`**.
+- Registro da validação completa na main: **`9b4a329`**.
+- StructuredOutput está habilitado como ferramenta interna; resposta lida de
+  `info.structured`; raciocínio não faz o GET de histórico incompatível.
+- OpenCode usa os agentes enxutos `ifood-search` e `ifood-reasoning`.
+- Teste real de regressão do Lorenzo, com catálogo sintético: Curador rejeitou pastel,
+  esfiha sabor pizza e “Pizza” barata de esfiharia. Essa evidência é do relatório dele.
+- Teste independente do Codex local **com catálogo iFood real** chegou à recomendação
+  final com Curador, Estrategista e Orquestrador usando Gemini de verdade.
+
+**Limite da conclusão:** o defeito de integração que desativava a IA foi corrigido e
+o fluxo real passou. Isso não prova acerto semântico para todo item. Se o modelo falhar
+por cota/timeout, ainda existe fallback por regras. Se houver nova “pizza da esfiharia”,
+registrar a versão, a sessão nova e o evento `raciocinio_ia` do Curador (`succeeded` ou
+`failed`) antes de concluir que é o mesmo bug. Não reaproveitar sessão/resultado antigo
+para validar correção; há reutilização de busca e julgamento por até cinco minutos.
+
+### O que foi comprovado no fluxo real
+
+Em 18/10, pedido **“Quero pizza para 1 pessoa até R$ 1000”**, coordenadas públicas de
+São Carlos, lojas fechadas incluídas explicitamente para teste:
+
+1. Pesquisador consultou MCP iFood: **6 ofertas de 2 restaurantes**.
+2. Curador chamou Gemini: **4 itens aprovados, 1 parcial, 1 rejeitado**.
+3. Planejador montou **2 propostas por regras**; Auditor aprovou **2 por regras**.
+4. Estrategista consultou Memória do Cliente (sem histórico naquele atendimento) e
+   RAG; chamou Gemini para ordenar as propostas e devolveu a decisão ao Orquestrador.
+5. Orquestrador chamou Gemini e entregou resposta ao consumidor.
+
+**29,2 segundos, 4 chamadas ao modelo, script de verificação com exit code 0.**
+Recomendações: Marguerita da Just Pizza **R$ 60,99** e Quatro Queijos **R$ 70,99**,
+com `data_origin: ifood_mcp`, `is_open: false`, aviso explícito de loja fechada e
+indisponível para pedido e taxa de serviço desconhecida não incluída. Nenhuma compra.
+Houve eventos reais de comunicação entre os agentes e de sucesso das três análises de IA.
+
+Este teste usou API via ASGI com runtime/modelo/MCP reais; não foi teste da interface
+nem do SSE no navegador. O documento comercial do RAG continua **DEMO**. A busca anterior
+somente em lojas abertas retornou zero ofertas; outra para duas pessoas até R$ 150
+não gerou combinação válida. Não confundir esses resultados com falha de StructuredOutput.
+
+### Versões e processos locais de Gabriel — conferidos nesta atualização
+
+| Componente | Estado atual |
+| --- | --- |
+| Main remota | Contém a integração `d77049a` e o registro `9b4a329`; este documento acrescenta atualização posterior |
+| OpenCode principal | Reiniciado após o merge; `127.0.0.1:4096`, versão 1.19.3, health OK, iFood conectado, agentes `ifood-search` e `ifood-reasoning` carregados |
+| API principal local | `127.0.0.1:8000`, modo real; foi reiniciada com main atualizada e depois com a branch de áudio descrita abaixo |
+| Código servido atualmente pela API | Worktree `/tmp/ifood-audio-stt`, branch **`feat/audio-stt`**, commit **`d998d79`**, baseada em `9b4a329` |
+| Áudio no GitHub | **Ainda não publicado nem mergeado**; commit existe localmente. Dar pull na main não instala áudio |
+| OpenCode temporário | Porta 4097 foi usada nos testes; a API atual aponta para **4096**, não para esse serviço temporário |
+
+Na máquina do colega, atualizar o código e reiniciar os próprios processos continua
+necessário: o reinício feito em Gabriel não atualiza outro computador. Antes de novo
+teste, conferir `git log -1`, se `8acbc27` é ancestral do checkout, e se `/agent` do
+OpenCode lista ambos os agentes acima. `connected` sozinho não substitui uma busca real.
+O modelo usado nos testes foi `google/gemini-3.8-flash`; não foi trocado para Claude.
+
+### Áudio: implementado e ativo localmente, separado da main
+
+- Branch local `feat/audio-stt`, commit `d998d79`; arquivos: `backend/api/app.py`,
+  `backend/api/main.py`, `backend/integrations/local_transcription.py`,
+  `backend/integrations/requirements-stt.txt`, `backend/integrations/AUDIO.md` e
+  `backend/integrations/tests/test_local_transcription.py`.
+- Whisper `small` em CPU, `APP_STT_PROVIDER=whisper`, `APP_STT_MODEL=small`, ffmpeg e
+  faster-whisper instalados no ambiente local da API. Sem chave ou cota Gemini para STT.
+- **HTTP real na porta 8000**, WebM/Opus com fala sintética em português: transcreveu
+  “Eu quero uma pizza. Sem cebola. Para uma pessoa.” corretamente em **6,8 segundos**.
+  Teste ASGI com WAV: 14,43 segundos; silêncio retornou 422 `STT_NO_SPEECH`.
+- Contrato preservado: `POST /api/v1/audio/transcriptions` retorna texto,
+  `transcription_id`, `language: pt-BR` e `requires_confirmation: true`. A interface
+  revisa e envia pelo chat com `input_mode: audio`; transcrição não dispara agentes.
+- Limites: 10 MiB/120 segundos; áudio não é gravado em arquivo. Ainda falta gravação
+  humana pelo microfone e integração do frontend. Voz sintética não valida todo sotaque/ruído.
+- Suíte da main integrada: **283 passed, 3 skipped**. Suíte com áudio: **288 passed,
+  3 skipped**. Testes opt-in reais foram executados separadamente, não estão incluídos
+  como chamadas reais na contagem offline. Nenhuma nova chamada Gemini nesta atualização.
+
+### Memória, interface e pendências que realmente continuam
+
+- **Memória operacional:** SQLite em arquivo já é o padrão da API; não pedir novamente
+  para “ligar SQLite”. Isso não persiste o cadastro HTTP, eventos SSE e idempotência.
+- **Memória do cliente:** ligada ao Estrategista; dados por cliente/tenant durante o
+  processo. São solicitações ao bot, não compras confirmadas. Persistência entre reinícios
+  **adiada explicitamente por Gabriel**: o pitch terá uma execução contínua.
+- **RAG:** ligado, documentos comerciais DEMO; não representa margens/descontos reais.
+- **Frontend:** equipe está terminando a interface; integração visual e reconexão SSE
+  com o frontend final ainda pendentes. Não alterar design/frontend por causa deste relato.
+- **Gestor local:** suporte/cookie já existe na main; iniciar com `--local-demo-admin`
+  para habilitar no modo real. A API atual foi iniciada com `--real`, sem esse flag.
+  Para testar lojas fechadas, opção `--include-closed-restaurants` (não habilitada por
+  padrão). Esses flags são de demonstração local, não autenticação de produção.
+- **Contrato:** API já aceita `initial_context`; os documentos antigos em `feat/memory`
+  ainda precisam ser conciliados com os campos mais recentes de `PROMPT.md`/modelos.
+  Essa reconciliação não foi feita e não bloqueia o teste local já descrito.
+- **Compra:** carrinho/envio real de pedido, checkout, pagamento e desconto real não
+  foram entregues/validados por este trabalho. Exigem ferramentas autorizadas e confirmação.
+- Próximo trabalho: integrar a interface; revisar/publicar a branch de áudio antes de
+  outra máquina tentar usá-la; testar microfone e continuidade no cenário do pitch.
+  Não repetir buscas pagas apenas para reproduzir evidência já registrada.
+
+## HISTÓRICO — diagnósticos e prioridades abaixo não descrevem o estado atual
+
+<details>
+<summary>Relatórios anteriores preservados: ler pela versão citada, não como pendência atual</summary>
+
 > Leia antes de continuar. A correção de `feat/integrations@8acbc27` foi integrada
 > à `main` com autorização explícita de Gabriel em 18/10/2026. As regras de trabalho
 > continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
@@ -805,3 +923,5 @@ Nesta revisão somente este documento foi alterado. Código de agentes, API e ru
 - Testes de localização conferem as coordenadas enviadas no prompt ao OpenCode simulado, precedência de localização explícita, ausência de fallback não solicitado, preset inválido e substituição de São Paulo no launcher.
 - Lint dos arquivos Python alterados: aprovado. Não foram ligadas automaticamente persistência SQLite na API nem a opção de gestor em modo real; continuam pendentes.
 - Atualização de publicação: código e relatório desta entrega entraram na `main` pelo PR #4, merge `d57d96b`, com autorização do Lorenzo. A pendência de publicação descrita anteriormente foi resolvida. A retomada dos agentes NÃO foi implementada nesse PR; ver tarefa explícita no topo deste arquivo.
+
+</details>
