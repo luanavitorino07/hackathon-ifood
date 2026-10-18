@@ -117,22 +117,54 @@ class ConstraintsTest(unittest.TestCase):
     def test_unknown_restriction_blocks_approval_and_asks_customer(self):
         orch, ctx, sink, memory = make("Quero para 2 pessoas até R$ 100")
         ctx = SessionContext("sess_1", "t", None, "demo", ctx.message_text,
-                             initial_context={"restrictions": ["sem glúten"]})
+                             initial_context={"restrictions": ["alergia a amendoim"]})
         out = orch.handle_message(ctx)
         self.assertEqual(out.session_status, "waiting_customer")
         self.assertEqual(out.recommendations, [])
-        self.assertIn("sem-gluten", out.reply_text)
+        self.assertIn("alergia-a-amendoim", out.reply_text)
         self.assertNotIn("recommendations_ready", sink.types())
-        self.assertIn("sem-gluten", saved(memory)["dietary"])
+        self.assertIn("alergia-a-amendoim", saved(memory)["dietary"])
 
     def test_restriction_verified_by_offer_tags_is_approved(self):
         offers = [{"product_id": "p1", "name": "Prato", "unit_price_cents": 3000, "merchant_id": "m",
-                   "merchant_name": "M", "tags": ["Sem Glúten"], "delivery_fee_cents": 0,
+                   "merchant_name": "M", "tags": ["Gluten-Free"], "delivery_fee_cents": 0,
                    "other_fees_cents": 0, "eta_minutes": 20}]
         orch, ctx, _, _ = make("Quero para 2 pessoas até R$ 100", FakeRuntime(offers=offers))
         ctx = SessionContext("sess_1", "t", None, "demo", ctx.message_text,
                              initial_context={"restrictions": ["sem glúten"]})
         self.assertEqual(len(orch.handle_message(ctx).recommendations), 1)
+
+    def test_soft_restriction_without_tags_is_recommended_but_unverified(self):
+        offers = [{"product_id": "p1", "name": "Salada", "unit_price_cents": 2000, "merchant_id": "m",
+                   "merchant_name": "M", "tags": [], "delivery_fee_cents": 500,
+                   "other_fees_cents": None, "eta_minutes": 30}]
+        runtime = FakeRuntime(offers=offers)
+        orch, ctx, sink, _ = make("Quero para 2 pessoas até R$ 100", runtime)
+        ctx = SessionContext("sess_1", "t", None, "demo", ctx.message_text,
+                             initial_context={"restrictions": ["vegetariana"]})
+        out = orch.handle_message(ctx)
+        self.assertEqual(runtime.calls[0].context["dietary_filters"], ["VEGETARIAN"])
+        rec = out.recommendations[0]
+        self.assertTrue(any("não comprovada" in w for w in rec["warnings"]))
+        self.assertTrue(any(w.startswith("Taxa de serviço") for w in rec["warnings"]))
+        self.assertNotIn("Atende", " ".join(r for r in rec["reasons"] if "vegetarian" in r.lower()))
+        self.assertIn("não comprovada", out.reply_text)
+        self.assertEqual(rec["total_cents"], 2 * 2000 + 500)
+
+    def test_gluten_and_vegan_become_search_filters(self):
+        runtime = FakeRuntime()
+        orch, ctx, _, memory = make("Quero para 2 pessoas até R$ 100", runtime)
+        ctx = SessionContext("sess_1", "t", None, "demo", ctx.message_text,
+                             initial_context={"restrictions": ["vegana", "sem glúten"]})
+        orch.handle_message(ctx)
+        self.assertEqual(runtime.calls[0].context["dietary_filters"], ["GLUTEN_FREE", "VEGAN"])
+
+    def test_unknown_delivery_fee_keeps_total_unknown(self):
+        offers = [{"product_id": "p1", "name": "Prato", "unit_price_cents": 2000, "merchant_id": "m",
+                   "merchant_name": "M", "tags": [], "delivery_fee_cents": None,
+                   "other_fees_cents": None, "eta_minutes": None}]
+        orch, ctx, _, _ = make("Quero para 2 pessoas até R$ 100", FakeRuntime(offers=offers))
+        self.assertIsNone(orch.handle_message(ctx).recommendations[0]["total_cents"])
 
     def test_auditor_rejects_unverified_tag_restriction(self):
         st = WorkingState(Constraints(dietary=("sem-gluten",)), offers=[

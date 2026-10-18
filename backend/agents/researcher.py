@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models import AgentResult, Offer, SessionContext, WorkingState
+from .models import AgentResult, Offer, SessionContext, WorkingState, dietary_filters
 from .ports import RuntimeCall, RuntimeOutcome
 from .registry import AgentContext, AgentDefinition
 
@@ -39,10 +39,16 @@ SYSTEM = (
 )
 
 
-def _tool_context(session: SessionContext) -> dict[str, Any]:
-    """Contexto estruturado mínimo para as ferramentas. Hoje: apenas `location`, se informada."""
+def _tool_context(session: SessionContext, state: WorkingState) -> dict[str, Any]:
+    """Contexto estruturado mínimo: `location` (se houver) e `dietary_filters` (filtros de busca)."""
+    context: dict[str, Any] = {}
     location = (session.initial_context or {}).get("location")
-    return {"location": location} if location else {}
+    if location:
+        context["location"] = location
+    filters = dietary_filters(state.constraints)
+    if filters:
+        context["dietary_filters"] = filters
+    return context
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -99,7 +105,7 @@ class Researcher:
             agent_id="researcher", task_id=ctx.task_id, session_id=ctx.session.session_id,
             system=SYSTEM, prompt=prompt, output_schema=OFFER_SCHEMA,
             allowed_tools=("offer_search",), max_tool_calls=3,
-            context=_tool_context(ctx.session)))
+            context=_tool_context(ctx.session, ctx.state)))
         for t in outcome.tool_calls:
             ctx.events.tool_activity("researcher", t.call_id, t.tool_name, t.provider,
                                      "started", None, f"Iniciando {t.tool_name}")

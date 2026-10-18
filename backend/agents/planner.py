@@ -6,7 +6,7 @@ from typing import Any
 
 from .events import new_id
 from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, Constraints, Offer,
-                     SessionContext, WorkingState, slug, tag_requirements)
+                     SessionContext, WorkingState, slug, soft_unverified, tag_requirements)
 from .registry import AgentContext, AgentDefinition
 
 MAX_RECOMMENDATIONS = 3
@@ -21,16 +21,16 @@ def has_tags(offer: Offer, required: tuple[str, ...]) -> bool:
     return all(r in have for r in required)
 
 
-def _pick(pool: list[Offer], units: int, c: Constraints, premium: bool) -> list[tuple[Offer, int]] | None:
+def _pick(pool: list[Offer], units: int, c: Constraints, premium: bool, required: tuple[str, ...],
+          veg_enforced: bool) -> list[tuple[Offer, int]] | None:
     """Escolhe `units` itens de um restaurante. None se as restrições não puderem ser atendidas."""
-    required = tag_requirements(c)  # restrição sem tag na oferta não é verificável => não elegível
     eligible = [o for o in pool if has_tags(o, required)
-                and not (VEGETARIAN_ALL in c.dietary and not is_vegetarian(o))]
+                and not (veg_enforced and VEGETARIAN_ALL in c.dietary and not is_vegetarian(o))]
     if not eligible:
         return None
     ordered = sorted(eligible, key=lambda o: (o.unit_price_cents, o.product_id), reverse=premium)
     chosen: list[Offer] = []
-    if VEGETARIAN_OPTION in c.dietary and VEGETARIAN_ALL not in c.dietary:
+    if veg_enforced and VEGETARIAN_OPTION in c.dietary and VEGETARIAN_ALL not in c.dietary:
         veg = [o for o in ordered if is_vegetarian(o)]
         if not veg:
             return None
@@ -50,6 +50,9 @@ def build_recommendation(merchant: Offer, picked: list[tuple[Offer, int]], origi
               "unit_price_cents": o.unit_price_cents} for o, q in picked]
     subtotal = sum(i["quantity"] * i["unit_price_cents"] for i in items)
     delivery, other = merchant.delivery_fee_cents, merchant.other_fees_cents
+    if other is None:  # decisão do produto: a busca do iFood não informa taxa de serviço
+        other = 0
+        warnings.append("Taxa de serviço não informada pelo iFood: não incluída no total")
     total = subtotal + delivery + other if delivery is not None and other is not None else None
     return {
         "recommendation_id": new_id("rec"), "merchant_id": merchant.merchant_id,
@@ -71,6 +74,9 @@ class Planner:
 
     def run(self, ctx: AgentContext) -> AgentResult:
         st, c = ctx.state, ctx.state.constraints
+        required = tag_requirements(c, st.offers)
+        unverified = soft_unverified(c, st.offers)
+        veg_enforced = "vegetarian" not in unverified
         units = c.party_size or 1
         by_merchant: dict[str, list[Offer]] = defaultdict(list)
         for o in st.offers:
@@ -79,12 +85,14 @@ class Planner:
         skipped_budget = skipped_restriction = 0
         for pool in by_merchant.values():
             for premium in (False, True):
-                picked = _pick(pool, units, c, premium)
+                picked = _pick(pool, units, c, premium, required, veg_enforced)
                 if picked is None:
                     skipped_restriction += 1
                     continue
-                reasons = ["Atende as restrições informadas" if c.dietary else "Sem restrições informadas"]
-                warnings: list[str] = []
+                reasons = ["Atende as restrições verificáveis informadas" if c.dietary else "Sem restrições informadas"]
+                warnings: list[str] = [
+                    f"Restrição '{r}' não comprovada pelo iFood (filtro de busca solicitado): "
+                    "confira a descrição do item" for r in unverified]
                 rec = build_recommendation(pool[0], picked, st.data_origin, reasons, warnings)
                 known = rec["total_cents"] if rec["total_cents"] is not None else rec["subtotal_cents"]
                 if rec["total_cents"] is None:

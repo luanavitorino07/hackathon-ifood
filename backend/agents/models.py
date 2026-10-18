@@ -26,9 +26,32 @@ def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", plain).strip("-")
 
 
-def tag_requirements(constraints: "Constraints") -> tuple[str, ...]:
-    """Restrições que dependem de tag explícita na oferta para serem verificadas."""
-    return tuple(d for d in constraints.dietary if d not in SPECIAL_RESTRICTIONS)
+# Restrições "brandas": o iFood só as aceita como filtro de busca, sem tag que as comprove
+# na resposta. Sem tag nas ofertas, a recomendação sai marcada como NÃO verificada.
+SOFT_FILTERS = {"vegetarian": "VEGETARIAN", "vegan": "VEGAN", "gluten-free": "GLUTEN_FREE"}
+
+
+def _soft_key(restriction: str) -> str:
+    return "vegetarian" if restriction in SPECIAL_RESTRICTIONS else restriction
+
+
+def soft_unverified(constraints: "Constraints", offers: "list[Offer] | tuple[Offer, ...]") -> tuple[str, ...]:
+    """Restrições brandas pedidas para as quais nenhuma oferta traz a tag comprobatória."""
+    found = {slug(t) for o in offers for t in o.tags}
+    keys = {_soft_key(d) for d in constraints.dietary if _soft_key(d) in SOFT_FILTERS}
+    return tuple(sorted(k for k in keys if k not in found))
+
+
+def dietary_filters(constraints: "Constraints") -> list[str]:
+    """Filtros de busca (nomes do MCP) para as restrições brandas."""
+    return sorted({SOFT_FILTERS[_soft_key(d)] for d in constraints.dietary if _soft_key(d) in SOFT_FILTERS})
+
+
+def tag_requirements(constraints: "Constraints", offers: "list[Offer] | tuple[Offer, ...]" = ()) -> tuple[str, ...]:
+    """Restrições que EXIGEM tag explícita no item: as não-brandas e as brandas comprováveis."""
+    skip = set(soft_unverified(constraints, offers)) if offers else set()
+    return tuple(d for d in constraints.dietary
+                 if d not in SPECIAL_RESTRICTIONS and d not in skip)
 
 
 @dataclass(frozen=True)

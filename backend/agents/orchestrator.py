@@ -79,7 +79,7 @@ class Orchestrator:
                                      f"Proposta {rid} descartada por reprovação na auditoria")
                 events.conflict(cid, ["planner", "auditor"], f"Proposta {rid} descartada", "resolved")
         if not approved:
-            unverifiable = tag_requirements(state.constraints)
+            unverifiable = tag_requirements(state.constraints, state.offers)
             if not state.offers:
                 reason, ask = "Não encontrei ofertas disponíveis.", "Pode ajustar o pedido?"
             elif unverifiable:
@@ -111,6 +111,9 @@ class Orchestrator:
         text = f"Sugiro {rec['merchant_name']}: {items}. Total {total}"
         if rec["total_cents"] is None:
             text += " (sem taxas, que ainda não foram informadas)"
+        notes = [w for w in rec["warnings"] if "não comprovada" in w or w.startswith("Taxa de serviço")]
+        if notes:
+            text += ". Atenção: " + " ".join(notes)
         text += ". Deseja confirmar este pedido?"
         if origin == "demo":
             text += " [dados de demonstração]"

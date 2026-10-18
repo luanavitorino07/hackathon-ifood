@@ -42,10 +42,14 @@ def overlay(base: Constraints, top: Constraints) -> Constraints:
 
 
 def normalize_restriction(text: str) -> str:
-    """'vegetariana' -> VEGETARIAN_ALL; qualquer outra vira slug (exige tag na oferta)."""
+    """'vegetariana' -> VEGETARIAN_ALL; vegana e sem glúten viram restrições brandas; o resto vira slug (exige tag)."""
     s = slug(text)
     if s.startswith("vegetarian"):
         return VEGETARIAN_ALL
+    if s.startswith("vegan"):
+        return "vegan"
+    if "gluten" in s and any(w in s for w in ("sem", "free", "livre")):
+        return "gluten-free"
     return s
 
 
