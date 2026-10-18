@@ -135,3 +135,13 @@ As duas tentativas ao vivo de pedido vegetariano excederam 60 segundos antes da
 chamada MCP (`LLM_TIMEOUT`); o filtro `itemRestrictions` está coberto pelos testes,
 mas sua execução real ainda precisa ser confirmada. Não foram inventadas ofertas
 para contornar essas falhas.
+
+Diagnóstico posterior das repetições: uma chamada mínima diretamente ao Google,
+usando a mesma chave local sem exibi-la, confirmou HTTP 429 `RESOURCE_EXHAUSTED`.
+O provedor informou limite de 20 solicitações para `gemini-3.8-flash` e espera de
+cerca de 21h35 naquele momento. A repetição do teste de fumaça também falhou por
+ausência de resultado dentro do prazo. O primeiro fluxo real completo passou;
+não considerar as repetições nem o filtro vegetariano aprovados enquanto a cota
+não for restabelecida. O cliente normaliza 429 para quota quando o OpenCode expõe
+o erro; se o OpenCode fica aguardando internamente, o deadline continua produzindo
+`LLM_TIMEOUT` e abortando a execução, sem promover dados simulados a dados reais.
