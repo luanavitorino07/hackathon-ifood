@@ -58,7 +58,7 @@ class SalesStrategist:
     order = 40
 
     def should_activate(self, session: SessionContext, state: WorkingState) -> bool:
-        return len(state.approved_ids) > 0
+        return len(state.approved_ids) > 0 and not state.shopping_list
 
     def run(self, ctx: AgentContext) -> AgentResult:
         st, session = ctx.state, ctx.session

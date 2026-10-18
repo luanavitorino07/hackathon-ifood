@@ -423,10 +423,12 @@ def test_http_curation_uses_actual_opencode_wire_format_and_no_reasoning_history
 
     asyncio.run(scenario())
     assert reasoning_requests
-    assert permissions[1] == [
+    # a ordem das chamadas muda com os agentes (o Intérprete raciocina antes da busca)
+    reasoning_permissions = [
         {"permission": "*", "pattern": "*", "action": "deny"},
         {"permission": "StructuredOutput", "pattern": "*", "action": "allow"},
     ]
+    assert reasoning_permissions in permissions
 
 
 def test_http_preserves_verified_delivery_and_catalog_details():

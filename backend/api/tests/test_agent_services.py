@@ -132,3 +132,39 @@ def test_orchestrator_catalog_is_adapted_to_public_model() -> None:
     assert len(agents) == 1
     assert agents[0].agent_id == "researcher"
     assert agents[0].capabilities == ["offer_search"]
+
+
+def test_due_schedules_run_in_origin_session_with_customer_identity() -> None:
+    async def scenario() -> None:
+        state = InMemoryBackendState()
+        customer = RequestIdentity("tenant_demo", "client_demo_1", "customer")
+        session = await state.create_session(identity=customer, client_id="client_demo_1")
+        sink = StateEventSink(state)
+        purchase = SimpleNamespace(session_id=session.session_id, tenant_id="tenant_demo",
+                                   client_id="client_demo_1")
+
+        class _Orchestrator:
+            ran: list[str] = []
+
+            def due_schedules(self):
+                return ["sched_1"]
+
+            def scheduled(self, schedule_id):
+                return purchase
+
+            def run_schedule(self, schedule_id):
+                self.ran.append(schedule_id)
+                sink.emit(session_id=session.session_id, type="agent_status",
+                          actor={"kind": "agent", "id": "orchestrator"}, recipient=None,
+                          visibility="admin", payload={"agent_id": "orchestrator", "status": "done",
+                                                       "task_id": None, "summary": "Cesta do dia"})
+                return SimpleNamespace(session_status="active")
+
+        orchestrator = _Orchestrator()
+        dispatcher = OrchestratorDispatcher(orchestrator, lambda _: "context", sink)
+        assert await dispatcher.run_due_schedules() == 1
+        assert orchestrator.ran == ["sched_1"]
+        snapshot = await state.snapshot(session.session_id, customer)
+        assert snapshot.session.status == "active"
+
+    asyncio.run(scenario())

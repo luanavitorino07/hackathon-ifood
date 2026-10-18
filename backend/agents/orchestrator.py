@@ -3,21 +3,26 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any
+from dataclasses import replace
+from datetime import datetime, timezone
+from typing import Any, Callable
 
 from .chat import classify, reply_for
 from .events import ORCHESTRATOR_ID, EventEmitter, new_id
 from .customer_memory_agent import MEMORY_ID, customer_facts
+from .grocery import (ListItem, ScheduleRequest, describe_when, iso, list_text, next_occurrence, parse_iso,
+                      wants_schedule_cancel, wants_schedule_list)
 from .intent import constraints_from_initial_context, extract_constraints, overlay, wants_cheaper
 from .interpreter import DEFINITION as INTERPRETER_DEFINITION, INTERPRETER_ID, Reading, describe, interpret
 from .models import (AgentResult, AgentsOutput, Constraints, SessionContext, WorkingState, persona_key,
                      restriction_label, tag_requirements)
 from .ports import (AgentRuntimePort, CustomerMemoryPort, CustomerProfile, EventSink, KnowledgePort,
-                    MemoryPort, RevisionConflict)
+                    MemoryPort, RevisionConflict, ScheduledPurchase, SchedulePort)
 from .ai import ask
 from .failures import classify_failure
 from .resumption import reusable_offers, signature
 from .registry import Agent, AgentContext, AgentDefinition, AgentRegistry
+from .scheduler import SCHEDULE_NOTE, plan_schedule
 from .strategist import STRATEGIES
 
 REPLY_SYSTEM = ("Você é o atendente simpático de um chatbot de comida. Reescreva a RESPOSTA_BASE de forma natural "
@@ -41,15 +46,18 @@ def _brl(cents: int | None) -> str:
 def _customer_note(warning: str) -> bool:
     """Avisos que o cliente precisa ler na resposta (restrição sem prova, taxa, prato aproximado)."""
     return ("não comprovada" in warning or "avaliada pela IA" in warning or warning.startswith("Taxa de serviço")
-            or warning.startswith("Não encontrei exatamente"))
+            or warning.startswith(("Não encontrei exatamente", "Não encontrei neste mercado", "Restrições não verificadas",
+                                   "Tamanhos pedidos não conferidos")))
 
 
 class Orchestrator:
     def __init__(self, registry: AgentRegistry, runtime: AgentRuntimePort,
                  memory: MemoryPort, sink: EventSink, knowledge: KnowledgePort | None = None,
-                 customers: CustomerMemoryPort | None = None) -> None:
+                 customers: CustomerMemoryPort | None = None, schedules: SchedulePort | None = None,
+                 clock: Callable[[], datetime] | None = None) -> None:
         self._registry, self._runtime, self._memory, self._sink = registry, runtime, memory, sink
-        self._knowledge, self._customers = knowledge, customers
+        self._knowledge, self._customers, self._schedules = knowledge, customers, schedules
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._current: SessionContext | None = None
 
     def catalog(self) -> list[dict[str, object]]:
@@ -59,15 +67,24 @@ class Orchestrator:
     def handle_message(self, session: SessionContext) -> AgentsOutput:
         events = EventEmitter(self._sink, session.session_id)
         self._current = session
+        now = self._clock()
+        if self._schedules is not None and wants_schedule_list(session.message_text):
+            return self._list_schedules(session, events)
+        if self._schedules is not None and wants_schedule_cancel(session.message_text):
+            return self._cancel_schedule(session, events)
         stored = self._memory.load(session.session_id).state
         self._resolve_open_conflicts(session, stored, events)
+        grocery = stored.get("grocery") if isinstance(stored.get("grocery"), dict) else {}
+        stored_list = tuple(i for i in (ListItem.from_dict(x) for x in grocery.get("items") or []) if i)
+        stored_schedule = ScheduleRequest.from_dict(grocery.get("schedule"))
         base, constraints, in_order, shown, stored_terms = self._build_constraints(session)
         search = stored.get("search") if isinstance(stored.get("search"), dict) else {}
         stored_extras = tuple(x for x in search.get("extras") or [] if isinstance(x, str))
         profile = self._profile(session)
         base, constraints = self._apply_profile(stored, base, constraints, profile, events)
-        state = WorkingState(constraints=constraints, customer_profile=profile)
-        reading = self._interpret(session, state, base, stored_terms, in_order, shown, events, stored_extras)
+        state = WorkingState(constraints=constraints, customer_profile=profile, now=now)
+        reading = self._interpret(session, state, base, stored_terms, in_order, shown, events, stored_extras,
+                                  stored_list, stored_schedule)
         constraints = state.constraints = reading.constraints
         state.query_terms, state.request_summary = reading.terms, reading.summary
         state.extra_terms = reading.extras
@@ -88,22 +105,34 @@ class Orchestrator:
         if reading.profile_conflict and profile is not None and profile.declared_restrictions:
             constraints = state.constraints = self._profile_conflict(reading.profile_conflict, constraints,
                                                                      profile, events)
+        if reading.groceries is not None:  # compra de supermercado (agendada ou não)
+            return self._grocery(session, state, reading, events)
+        if grocery:  # mudou de mercado para comida: a lista deixa de valer
+            self._persist(session.session_id, ORCHESTRATOR_ID, {"grocery": None})
         if intent != "order":  # papo: responde direto, sem a esteira de busca
             return self._chat_only(session, events, constraints, reading, profile)
         self._persist(session.session_id, ORCHESTRATOR_ID,
                       {"constraints": constraints.to_dict(), "conversation": {"stage": "ordering"},
                        "search": {"terms": list(state.query_terms), "summary": state.request_summary,
                                   "extras": list(state.extra_terms)}})
-        events.agent_status(ORCHESTRATOR_ID, "running", None, "Planejando atendimento")
         current_signature = {**signature(session, constraints, state.query_terms),
                              "extras": sorted(state.extra_terms)}
+        return self._pipeline(session, state, events, current_signature)
+
+    def _pipeline(self, session: SessionContext, state: WorkingState, events: EventEmitter,
+                  current_signature: dict[str, Any], allow_reuse: bool = True) -> AgentsOutput:
+        """Esteira de especialistas escolhidos pelo registro, reavaliada a cada estágio."""
+        constraints = state.constraints
+        events.agent_status(ORCHESTRATOR_ID, "running", None, "Planejando atendimento")
         # o julgamento do Curador depende também das preferências ("acha um já montado")
         curation_signature = {**current_signature, "preferences": sorted(constraints.preferences)}
-        reuse = reusable_offers(self._memory.load(session.session_id).state, session, current_signature)
+        reuse = reusable_offers(self._memory.load(session.session_id).state, session, current_signature) \
+            if allow_reuse else None
         if reuse is not None:  # só mudou quantidade/orçamento: replaneja sem nova busca
             state.offers, state.data_origin, why = reuse  # type: ignore[assignment]
             saved_search = self._memory.load(session.session_id).state.get("last_search") or {}
             state.extra_of = {k: v for k, v in (saved_search.get("extra_of") or {}).items() if isinstance(v, str)}
+            state.grocery_of = {k: v for k, v in (saved_search.get("grocery_of") or {}).items() if isinstance(v, str)}
             curation = self._memory.load(session.session_id).state.get("curation")
             if isinstance(curation, dict) and curation.get("signature") == curation_signature:
                 state.ai_fit = {k: (v[0], v[1]) for k, v in (curation.get("fit") or {}).items()
@@ -157,7 +186,7 @@ class Orchestrator:
             if aid == "researcher" and result.status == "done" and state.offers:
                 self._persist(session.session_id, ORCHESTRATOR_ID, {"last_search": {
                     "signature": current_signature, "at": time.time(), "count": len(state.offers),
-                    "extra_of": dict(state.extra_of)}})
+                    "extra_of": dict(state.extra_of), "grocery_of": dict(state.grocery_of)}})
             missing += result.missing_data
             limitations += result.limitations
             if result.status == "error":
@@ -165,12 +194,166 @@ class Orchestrator:
             if result.status == "needs_info":
                 break
         state.missing_data = missing
+        plan_schedule(state, events)  # compra de mercado agendada: confere o horário da cesta aprovada
         return self._finish(session.session_id, state, events, limitations)
+
+    # ---- compras de supermercado e agendamentos ---------------------------------------
+    def _grocery(self, session: SessionContext, state: WorkingState, reading: Reading,
+                 events: EventEmitter) -> AgentsOutput:
+        """Lista de mercado: busca item a item, monta a cesta por mercado e, se pedido, agenda."""
+        items, schedule = reading.groceries or (), reading.schedule
+        constraints = state.constraints
+        self._persist(session.session_id, ORCHESTRATOR_ID, {
+            "constraints": constraints.to_dict(), "conversation": {"stage": "ordering"},
+            "search": {"terms": [], "summary": state.request_summary, "extras": []},
+            "grocery": {"items": [i.to_dict() for i in items], "schedule": schedule.to_dict() if schedule else None}})
+        if not items:
+            return self._ask(events, "O que vai na sua lista de mercado? Pode mandar tudo numa mensagem, "
+                                     "ex.: arroz 5 kg, 2 leites, café e detergente.")
+        if schedule is not None and schedule.when is None:
+            return self._ask(events, f"Anotei a lista ({list_text(items)}). Para quando agendo a compra? "
+                                     "Ex.: sábado às 10h, ou toda segunda às 9h.")
+        state.shopping_list, state.schedule = items, schedule
+        state.query_terms, state.extra_terms = (), ()
+        current_signature = {**signature(session, constraints, ()), "extras": [],
+                             "groceries": sorted(i.name for i in items)}
+        return self._pipeline(session, state, events, current_signature)
+
+    def _ask(self, events: EventEmitter, text: str) -> AgentsOutput:
+        events.agent_status(ORCHESTRATOR_ID, "waiting", None, "Aguardando cliente")
+        events.assistant_message(text)
+        return AgentsOutput("waiting_customer", text, [])
+
+    def _my_schedules(self, session: SessionContext) -> list[ScheduledPurchase]:
+        assert self._schedules is not None
+        return self._schedules.list_for(session.tenant_id, self._client_key(session), session.session_id)
+
+    @staticmethod
+    def _schedule_line(p: ScheduledPurchase) -> str:
+        when = parse_iso(p.next_run_at)
+        items = list_text(tuple(i for i in (ListItem.from_dict(x) for x in p.items) if i))
+        pending = " (aguardando sua confirmação)" if p.status == "pending_confirmation" else ""
+        return (f"{describe_when(when, p.recurrence) if when else p.next_run_at}"
+                f"{' no ' + p.merchant_name if p.merchant_name else ''}: {items}{pending}")
+
+    def _list_schedules(self, session: SessionContext, events: EventEmitter) -> AgentsOutput:
+        mine = [p for p in self._my_schedules(session) if p.status == "active"]
+        if not mine:
+            text = "Você não tem compras agendadas. Quer agendar uma? Mande a lista e o dia, ex.: mercado todo sábado às 10h: arroz, feijão e café."
+        else:
+            lines = "; ".join(f"{n}) {self._schedule_line(p)}" for n, p in enumerate(mine, 1))
+            text = f"Suas compras agendadas: {lines}. Quer mudar ou cancelar alguma?"
+        events.agent_status(ORCHESTRATOR_ID, "running", None, f"Consulta de agendamentos: {len(mine)} ativo(s)")
+        return self._ask(events, text)
+
+    def _cancel_schedule(self, session: SessionContext, events: EventEmitter) -> AgentsOutput:
+        assert self._schedules is not None
+        mine = [p for p in self._my_schedules(session) if p.status == "active"]
+        pick = re.search(r"\b(\d{1,2})\b", session.message_text)
+        if not mine:
+            return self._ask(events, "Você não tem compras agendadas para cancelar. Posso ajudar com outra coisa?")
+        if len(mine) > 1 and not pick:
+            lines = "; ".join(f"{n}) {self._schedule_line(p)}" for n, p in enumerate(mine, 1))
+            return self._ask(events, f"Qual agendamento cancelo? {lines}. Responda, por exemplo, 'cancelar agendamento 1'.")
+        index = int(pick.group(1)) - 1 if pick and len(mine) > 1 else 0
+        if not 0 <= index < len(mine):
+            return self._ask(events, "Não achei esse número na sua lista de agendamentos. Pode conferir?")
+        target = mine[index]
+        self._schedules.save(replace(target, status="cancelled"))
+        events.memory_changed("customer" if target.client_key else "session", ["schedules"],
+                              "Compra agendada cancelada pelo cliente")
+        return self._ask(events, f"Pronto, cancelei a compra agendada de {self._schedule_line(target)}. "
+                                 "Quer agendar outra ou pedir alguma coisa agora?")
+
+    def scheduled(self, schedule_id: str) -> ScheduledPurchase | None:
+        """Agendamento pelo id (a API usa para saber a sessão e o cliente antes de rodar)."""
+        return self._schedules.get(schedule_id) if self._schedules is not None else None
+
+    def due_schedules(self, now: datetime | None = None) -> list[str]:
+        """Ids das compras agendadas que já chegaram na data (a API chama periodicamente)."""
+        if self._schedules is None:
+            return []
+        return [p.schedule_id for p in self._schedules.due(iso(now or self._clock()))]
+
+    def run_schedule(self, schedule_id: str) -> AgentsOutput | None:
+        """Chegou a data: refaz a cesta com os preços do dia, de preferência no mesmo mercado, e pede
+        confirmação ao cliente no atendimento de origem. Nunca compra sozinho."""
+        p = self._schedules.get(schedule_id) if self._schedules is not None else None
+        now = self._clock()
+        if p is None or p.status != "active" or p.next_run_at > iso(now):  # só na data (evita rodar duas vezes)
+            return None
+        when = parse_iso(p.next_run_at) or now
+        following = next_occurrence(when, p.recurrence)
+        while following is not None and following <= now:  # API ficou parada: pula as datas perdidas
+            following = next_occurrence(following, p.recurrence)
+        # avança antes de rodar: uma falha na busca não faz o agendamento disparar de novo a cada consulta
+        self._schedules.save(replace(p, next_run_at=iso(following) if following else p.next_run_at,
+                                     status="active" if following else "done"))
+        items = tuple(i for i in (ListItem.from_dict(x) for x in p.items) if i)
+        session = SessionContext(p.session_id, p.tenant_id, p.client_id, p.mode,
+                                 "Compra agendada: " + list_text(items), initial_context=p.initial_context)
+        self._current = session
+        events = EventEmitter(self._sink, session.session_id)
+        stored = self._memory.load(session.session_id).state
+        saved = Constraints.from_dict(stored.get("constraints"))
+        constraints = Constraints(p.budget_cents, None, saved.dietary, saved.preferences)
+        label = describe_when(when, p.recurrence)
+        task = new_id("task")
+        events.agent_message(ORCHESTRATOR_ID, "researcher", task, "request",
+                             f"Compra agendada chegou ({label}): refazer a cesta com os preços do dia")
+        state = WorkingState(constraints=constraints, now=now, shopping_list=items,
+                             preferred_merchant_id=p.merchant_id,
+                             reply_prefix=f"📅 Chegou o dia da sua compra agendada ({describe_when(when)})! ")
+        self._persist(session.session_id, ORCHESTRATOR_ID, {
+            "constraints": constraints.to_dict(), "conversation": {"stage": "ordering"},
+            "grocery": {"items": [i.to_dict() for i in items], "schedule": None}})
+        out = self._pipeline(session, state, events, {**signature(session, constraints, ()), "extras": [],
+                                                      "groceries": sorted(i.name for i in items)}, allow_reuse=False)
+        best = out.recommendations[0] if out.recommendations else None
+        if best is not None:
+            current = self._schedules.get(schedule_id) or p  # type: ignore[union-attr]
+            self._schedules.save(replace(current, last_total_cents=best["total_cents"]))  # type: ignore[union-attr]
+        return out
+
+    def _save_schedule(self, session: SessionContext, state: WorkingState, best: dict[str, Any]) -> str | None:
+        """Agendamento proposto fica pendente até o cliente confirmar."""
+        plan = state.schedule_plan or {}
+        if self._schedules is None or "when" not in plan:
+            return None
+        sid = new_id("sched")
+        location = (session.initial_context or {}).get("location")
+        self._schedules.save(ScheduledPurchase(
+            schedule_id=sid, tenant_id=session.tenant_id, session_id=session.session_id,
+            client_id=session.client_id, client_key=self._client_key(session), mode=session.mode,
+            items=tuple(i.to_dict() for i in state.shopping_list), budget_cents=state.constraints.budget_cents,
+            merchant_id=best["merchant_id"], merchant_name=best["merchant_name"], next_run_at=plan["when"],
+            recurrence=plan["recurrence"], status="pending_confirmation",
+            initial_context={"location": location} if location else None, last_total_cents=best["total_cents"]))
+        return sid
+
+    def _basket_text(self, rec: dict[str, Any], state: WorkingState) -> str:
+        items = ", ".join(f"{i['quantity']}x {i['name']}" for i in rec["items"])
+        total = _brl(rec["total_cents"] if rec["total_cents"] is not None else rec["subtotal_cents"])
+        text = f"Montei sua cesta no {rec['merchant_name']}: {items}. Total {total}"
+        if rec["total_cents"] is None:
+            text += " (sem taxas, que ainda não foram informadas)"
+        notes = [w for w in rec["warnings"] if _customer_note(w)]
+        if notes:
+            text += ". Atenção: " + "; ".join(notes)
+        plan = state.schedule_plan or {}
+        if "label" in plan:
+            text += f". Agendo para {plan['label']}: {SCHEDULE_NOTE[0].lower() + SCHEDULE_NOTE[1:]}. Confirma o agendamento?"
+        else:
+            text += ". Deseja confirmar esta compra?"
+        if state.data_origin == "demo":
+            text += " [dados de demonstração]"
+        return text
 
     # ---- entendimento, cadastro e conflitos ------------------------------------------
     def _interpret(self, session: SessionContext, state: WorkingState, base: Constraints,
                    stored_terms: tuple[str, ...], in_order: bool, shown: dict[str, Any] | None,
-                   events: EventEmitter, stored_extras: tuple[str, ...] = ()) -> Reading:
+                   events: EventEmitter, stored_extras: tuple[str, ...] = (),
+                   stored_list: tuple[ListItem, ...] = (), stored_schedule: ScheduleRequest | None = None) -> Reading:
         task = new_id("task")
         events.agent_message(ORCHESTRATOR_ID, INTERPRETER_ID, task, "request", "Entender a mensagem do cliente")
         events.agent_status(INTERPRETER_ID, "running", task, INTERPRETER_DEFINITION.role)
@@ -185,7 +368,8 @@ class Orchestrator:
         if shown:
             items = ", ".join(shown.get("items") or [])
             last = f"{shown.get('merchant') or ''}: {items}".strip(": ") or None
-        reading = interpret(ctx, base, state.constraints, stored_terms, in_order, last, facts, stored_extras)
+        reading = interpret(ctx, base, state.constraints, stored_terms, in_order, last, facts, stored_extras,
+                            stored_list, stored_schedule)
         events.agent_status(INTERPRETER_ID, "done", task, "Mensagem entendida")
         events.agent_message(INTERPRETER_ID, ORCHESTRATOR_ID, task, "proposal", describe(reading))
         removed = [r for r in state.constraints.dietary if r not in reading.constraints.dietary]
@@ -275,6 +459,10 @@ class Orchestrator:
     def _confirm(self, session: SessionContext, events: EventEmitter, constraints: Constraints,
                  shown: dict[str, Any]) -> AgentsOutput:
         """O cliente aceitou a última sugestão: registra a venda da estratégia (monitoria)."""
+        scheduled = self._schedules.get(shown["schedule_id"]) if self._schedules is not None and \
+            isinstance(shown.get("schedule_id"), str) else None
+        if scheduled is not None and scheduled.status == "pending_confirmation":
+            return self._confirm_schedule(session, events, constraints, scheduled)
         strategy = shown.get("strategy")
         key = self._client_key(session)
         if self._customers is not None and key and hasattr(self._customers, "record_acceptance"):
@@ -289,6 +477,22 @@ class Orchestrator:
         self._persist(session.session_id, ORCHESTRATOR_ID, {"constraints": constraints.to_dict(),
                                                             "conversation": {"stage": "confirmed"}})
         events.agent_status(ORCHESTRATOR_ID, "done", None, "Pedido aceito pelo cliente")
+        events.assistant_message(text)
+        return AgentsOutput("waiting_customer", text, [])
+
+    def _confirm_schedule(self, session: SessionContext, events: EventEmitter, constraints: Constraints,
+                          scheduled: ScheduledPurchase) -> AgentsOutput:
+        assert self._schedules is not None
+        self._schedules.save(replace(scheduled, status="active"))
+        line = self._schedule_line(replace(scheduled, status="active"))
+        events.memory_changed("customer" if scheduled.client_key else "session", ["schedules"],
+                              "Compra de mercado agendada pelo cliente")
+        text = (f"Agendado! ✅ {line[0].upper() + line[1:]}. Na data eu refaço a cesta com os preços do dia e peço "
+                "sua confirmação antes de comprar; nesta versão nenhum pedido é enviado ao iFood e nenhum pagamento "
+                "é feito. Para ver ou cancelar, é só dizer 'meus agendamentos'. Quer mais alguma coisa?")
+        self._persist(session.session_id, ORCHESTRATOR_ID, {"constraints": constraints.to_dict(), "grocery": None,
+                                                            "conversation": {"stage": "confirmed"}, "shown": None})
+        events.agent_status(ORCHESTRATOR_ID, "done", None, "Compra agendada")
         events.assistant_message(text)
         return AgentsOutput("waiting_customer", text, [])
 
@@ -377,13 +581,23 @@ class Orchestrator:
         for rid, problems in state.issues.items():
             if problems:
                 cid = new_id("conf")
-                events.conflict(cid, ["planner", "auditor"], f"Proposta {rid}: " + "; ".join(problems), "open")
-                events.agent_message(ORCHESTRATOR_ID, "planner", cid, "resolution",
+                author = "grocery_basket" if state.shopping_list else "planner"
+                events.conflict(cid, [author, "auditor"], f"Proposta {rid}: " + "; ".join(problems), "open")
+                events.agent_message(ORCHESTRATOR_ID, author, cid, "resolution",
                                      f"Proposta {rid} descartada por reprovação na auditoria")
-                events.conflict(cid, ["planner", "auditor"], f"Proposta {rid} descartada", "resolved")
+                events.conflict(cid, [author, "auditor"], f"Proposta {rid} descartada", "resolved")
         if not approved:
             unverifiable = tag_requirements(state.constraints, state.offers)
-            if not state.offers and state.query_terms:
+            problem = (state.schedule_plan or {}).get("problem")
+            if problem:
+                reason, ask = problem, "Pode escolher outro dia e horário?"
+            elif state.shopping_list and not state.offers:
+                reason = f"Não encontrei esses produtos em mercados perto de você agora ({list_text(state.shopping_list)})."
+                ask = "Quer ajustar a lista ou tentar mais tarde?"
+            elif state.shopping_list and state.cheapest_over_budget_cents is None:
+                reason = "Não consegui montar uma cesta que atenda à lista e às restrições."
+                ask = "Quer ajustar a lista ou as restrições?"
+            elif not state.offers and state.query_terms:
                 reason = f"Não encontrei \"{' '.join(state.query_terms)}\" disponível agora perto de você."
                 ask = "Quer tentar outro prato ou um termo mais geral?"
             elif not state.offers:
@@ -419,25 +633,31 @@ class Orchestrator:
             else:
                 reason, ask = ("Nenhuma opção atende orçamento e restrições ao mesmo tempo.",
                                "Pode ajustar o orçamento ou as restrições?")
-            text = f"{reason} {ask}"
+            text = (state.reply_prefix or "") + f"{reason} {ask}"
             events.decision(None, reason, [], limitations or state.missing_data)
             events.agent_status(ORCHESTRATOR_ID, "waiting", None, "Aguardando cliente")
             events.assistant_message(text)
             return AgentsOutput("waiting_customer", text, [])
         best = approved[0]
         shown = best["total_cents"] if best["total_cents"] is not None else best["subtotal_cents"]
+        schedule_id = self._save_schedule(self._current, state, best) if self._current is not None else None
         self._persist(session_id, ORCHESTRATOR_ID,
                       {"shown": {"recommendation_id": best["recommendation_id"], "total_cents": shown,
                                  "merchant": best["merchant_name"], "strategy": state.strategy,
-                                 "items": [f"{i['quantity']}x {i['name']}" for i in best["items"]]}})
+                                 "items": [f"{i['quantity']}x {i['name']}" for i in best["items"]],
+                                 "schedule_id": schedule_id}})
         self._remember_request(session_id, state, events)
         events.recommendations_ready(approved)
         events.decision(best["recommendation_id"],
                         f"Recomendação principal: {best['merchant_name']}",
                         best["reasons"], limitations + best["warnings"])
         events.agent_status(ORCHESTRATOR_ID, "done", None, "Recomendação pronta")
-        text = self._reply_text(best, state.data_origin, state.pitch)
-        text = self._ai_reply(state, best, text, events) or text
+        if state.shopping_list:  # cesta: texto montado pelo código (lista longa, sem reescrita da IA)
+            text = self._basket_text(best, state)
+        else:
+            text = self._reply_text(best, state.data_origin, state.pitch)
+            text = self._ai_reply(state, best, text, events) or text
+        text = (state.reply_prefix or "") + text
         events.assistant_message(text)
         return AgentsOutput("active", text, approved)
 

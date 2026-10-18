@@ -29,6 +29,7 @@ from .models import Mode
 from .services import (
     DemoIdentityResolver,
     IdentityResolver,
+    ScheduleTicker,
     build_agent_services,
 )
 from .state import InMemoryBackendState
@@ -94,6 +95,10 @@ def build_application(
         ),
     )
     application.state.agent_services = services
+    ticker = ScheduleTicker(services.dispatcher, float(os.getenv("APP_SCHEDULE_TICK_SECONDS", "30")))
+    application.state.schedule_ticker = ticker
+    application.router.add_event_handler("startup", ticker.start)
+    application.router.add_event_handler("shutdown", ticker.stop)
     application.state.memory_backend = type(selected_memory).__name__
     if owns_memory and callable(getattr(selected_memory, "close", None)):
         application.router.add_event_handler("shutdown", selected_memory.close)

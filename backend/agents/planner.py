@@ -144,7 +144,7 @@ class Planner:
     order = 20
 
     def should_activate(self, session: SessionContext, state: WorkingState) -> bool:
-        return bool(state.offers)
+        return bool(state.offers) and not state.shopping_list  # lista de mercado: Montador da cesta
 
     @staticmethod
     def _select(st: WorkingState, offers: list[Offer]) -> tuple[list[Offer], set[str]]:

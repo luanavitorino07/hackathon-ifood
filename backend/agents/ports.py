@@ -159,3 +159,43 @@ class StrategyOutcomePort(Protocol):
     def strategy_performance(self, tenant_id: str) -> list[tuple[str, int, int]]:
         """(estratégia, oferecida, aceita) somando todos os clientes do tenant."""
         ...
+
+
+# ---- compras agendadas ----------------------------------------------------------------
+@dataclass(frozen=True)
+class ScheduledPurchase:
+    """Compra de supermercado agendada pelo cliente. O iFood não recebe o agendamento: na data, os agentes
+    refazem a cesta com os preços do dia e o cliente confirma antes de qualquer compra."""
+
+    schedule_id: str
+    tenant_id: str
+    session_id: str  # atendimento onde a cesta do dia será apresentada
+    client_id: str | None
+    client_key: str | None  # cliente na memória (None = anônimo, só nesta sessão)
+    mode: Literal["real", "demo"]
+    items: tuple[dict[str, Any], ...]  # ListItem.to_dict()
+    budget_cents: int | None
+    merchant_id: str | None  # mercado preferido (o da cesta aceita)
+    merchant_name: str | None
+    next_run_at: str  # ISO 8601 UTC
+    recurrence: Literal["none", "weekly", "biweekly", "monthly"]
+    status: Literal["pending_confirmation", "active", "done", "cancelled"]
+    initial_context: dict[str, Any] | None = None  # localização para a busca do dia (não vai para eventos)
+    last_total_cents: int | None = None
+
+
+@runtime_checkable
+class SchedulePort(Protocol):
+    """Agendamentos de compra. Padrão: `backend.agents.schedules.InMemorySchedules` (memória do processo)."""
+
+    def save(self, purchase: ScheduledPurchase) -> None: ...
+
+    def get(self, schedule_id: str) -> ScheduledPurchase | None: ...
+
+    def list_for(self, tenant_id: str, client_key: str | None, session_id: str) -> list[ScheduledPurchase]:
+        """Agendamentos ativos/pendentes do cliente (ou da sessão, se anônimo)."""
+        ...
+
+    def due(self, now_iso: str) -> list[ScheduledPurchase]:
+        """Agendamentos ativos com `next_run_at` <= agora."""
+        ...

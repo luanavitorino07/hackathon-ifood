@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import ipaddress
+import logging
 import secrets
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
@@ -18,6 +19,8 @@ from fastapi import Request
 from backend.integrations.search_quality import CLOSED_TEST_ONLY
 
 from .models import Actor, AgentDefinition, ChatMessageRequest, SubmitOrderRequest
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +155,32 @@ class OrchestratorDispatcher:
                 identity,
                 outcome.session_status,
             )
+
+    async def run_due_schedules(self) -> int:
+        """Compras agendadas que chegaram na data: os agentes refazem a cesta no atendimento de origem e
+        pedem confirmação ao cliente (nada é comprado). Usa a mesma trava por sessão das mensagens."""
+        due = getattr(self._orchestrator, "due_schedules", None)
+        if due is None or self._event_sink is None:
+            return 0
+        ran = 0
+        for schedule_id in await asyncio.to_thread(due):
+            purchase = self._orchestrator.scheduled(schedule_id)
+            if purchase is None or not purchase.client_id:
+                continue
+            lock = await self._session_lock(purchase.session_id)
+            async with lock:
+                identity = RequestIdentity(purchase.tenant_id, purchase.client_id, "customer")
+                try:
+                    with self._event_sink.bind(identity):
+                        outcome = await asyncio.to_thread(self._orchestrator.run_schedule, schedule_id)
+                    if outcome is not None:
+                        await self._event_sink.set_session_status(
+                            purchase.session_id, identity, outcome.session_status
+                        )
+                        ran += 1
+                except Exception:  # sessão encerrada/expirada não derruba o relógio
+                    logger.warning("compra agendada não executada", exc_info=True)
+        return ran
 
     async def _session_lock(self, session_id: str) -> asyncio.Lock:
         async with self._locks_guard:
@@ -361,3 +390,36 @@ class EmptyAgentCatalog:
 
 
 AsyncTask = Callable[[], Awaitable[None]]
+
+
+class ScheduleTicker:
+    """Relógio das compras agendadas: a cada ``interval_seconds`` roda as que venceram.
+
+    Vive no processo da API (agendamentos ficam na memória do processo). ``interval_seconds <= 0`` desliga.
+    """
+
+    def __init__(self, dispatcher: OrchestratorDispatcher, interval_seconds: float = 30.0) -> None:
+        self._dispatcher = dispatcher
+        self._interval = interval_seconds
+        self._task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        if self._interval > 0 and self._task is None:
+            self._task = asyncio.create_task(self._loop())
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+
+    async def _loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            try:
+                await self._dispatcher.run_due_schedules()
+            except Exception:
+                logger.warning("falha no relógio de compras agendadas", exc_info=True)

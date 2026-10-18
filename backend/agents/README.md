@@ -143,6 +143,38 @@ memória), follow-ups também contam como pedido.
   com RAG mas sem política recuperada, não sugere. Se o lucro esperado sob essas hipóteses melhorar, emite `discount_proposed` com `status="suggested"` e
   `requires_approval=true`, visível só ao gestor. O desconto **não** entra no total nem na fala ao cliente.
 
+## Compras de supermercado, agendadas ou não (`grocery.py`, `grocery_basket.py`, `scheduler.py`)
+"Compra do mês no mercado: arroz 5kg, 2 feijões, leite e café" e "mercado todo sábado às 10h: ...".
+
+1. **Intérprete (IA)** devolve `tipo: mercado`, a `lista` completa (item, quantidade, tamanho) e o
+   `agendamento` (data/hora/recorrência resolvidas a partir de `AGORA`). Reserva por regras em `grocery.py`
+   ("supermercado"/"mercado" escrito vence a IA; "adiciona café", "tira o leite"; "amanhã", "sábado", "dia 25",
+   "toda semana", "a cada 15 dias", "todo mês"). Datas em UTC, lidas e mostradas no horário de Brasília.
+   Restrição que só aparece no nome de um item ("leite sem lactose") vale só para esse item.
+2. **Pesquisador**: uma busca por item com `context.merchant_type = "GROCERIES"`; depois procura os itens que
+   faltam **dentro** do mercado que mais cobriu a lista (`context.merchant_id`, até 4 buscas).
+3. **Montador da cesta (IA, `grocery_basket`)**: por mercado, escolhe o produto de cada item ("doce de leite" não
+   é "leite"), a quantidade pelo tamanho pedido (5 kg com pacote de 1 kg = 5) e as restrições que o produto
+   contraria. O código monta a cesta (um mercado por proposta = uma entrega), soma o total e respeita o
+   orçamento; avisa os itens que faltam. Sem IA: correspondência por palavras, com aviso.
+4. **Auditor** (`audit_basket`): produto veio da busca, preço igual, mesmo mercado, é de um item da lista, não
+   repetido, aprovado pelo Montador, restrições com prova ou aviso, totais e orçamento.
+5. **Agendamento** (`scheduler.plan_schedule`, regra do orquestrador, não é agente): horário com 30 min a 4
+   meses de folga; a cesta sai com "Agendo para ...". Fica **pendente** até o cliente confirmar ("fechado");
+   aí vira `active`.
+6. Na data, `orch.due_schedules(now)` lista os vencidos e `orch.run_schedule(id)` refaz a cesta **com os preços
+   do dia**, de preferência no mesmo mercado, e pergunta ao cliente no atendimento de origem. Recorrente avança
+   para a próxima data (datas perdidas são puladas); único vira `done`. **Nunca compra sozinho**: o MCP liberado
+   só busca e toda compra exige confirmação.
+
+"Meus agendamentos" lista; "cancelar agendamento [n]" cancela. Guarda: `SchedulePort` (`ports.py`), padrão
+`schedules.InMemorySchedules` (memória do processo: reiniciar a API apaga). Planejador, Curador e Estrategista
+não rodam em compra de mercado. Recomendação e eventos seguem o contrato v1 sem campos novos.
+
+**Depende de fora do módulo** (proposto, não feito): o runtime real precisa repassar `merchant_type`/`merchant_id`
+do `context` ao `searchOffers` (hoje fixa `merchantType=RESTAURANT`), e a API precisa chamar `due_schedules` +
+`run_schedule` periodicamente. Sem isso, o modo demo funciona inteiro e o real busca no vertical errado.
+
 ## Eventos emitidos
 `agent_status`, `agent_message` (`request|proposal|review|resolution`), `tool_activity`
 (emitido após a chamada), `conflict_detected`, `decision_made`, `recommendations_ready`,
@@ -157,7 +189,7 @@ Eventos de agentes: `visibility="admin"`; resposta ao cliente e recomendações:
 ## Memória: chaves que o módulo escreve
 `constraints` (`budget_cents, party_size, dietary, preferences`), `conversation` (`stage`),
 `shown` (`recommendation_id`, `total_cents` da última recomendação mostrada), `search` (`terms`),
-`last_search` (`signature`, `at`, `count`), `candidates`,
+`last_search` (`signature`, `at`, `count`, `extra_of`, `grocery_of`), `candidates`, `grocery` (`items`, `schedule`),
 `data_origin`, `proposals`, `audit` (`approved`, `issues`). O módulo de memória
 pode guardá-las como JSON opaco.
 
