@@ -1,7 +1,7 @@
 [project]
 name = "hackathon-ifood-backend"
 version = "0.1.0"
-description = "Backend API and integrations for the iFood hackathon"
+description = "PedIA: escritório virtual multiagente do hackathon iFood (API, agentes, memória e integrações)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<1",
@@ -18,7 +18,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["backend/api/tests", "backend/integrations/tests"]
+testpaths = ["backend/api/tests", "backend/integrations/tests", "backend/agents/tests", "backend/memory/tests"]
 
 [tool.ruff]
 target-version = "py311"

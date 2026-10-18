@@ -1,8 +1,7 @@
 # API — execução local e integração com agentes
 
-Esta composição já inclui `backend.agents` integrado de `feat/agents@9c7180a`.
-API, runtime e os seis agentes estão no mesmo checkout; não é mais necessário
-exportar os agentes para uma pasta temporária ou configurar um `PYTHONPATH` extra.
+Esta composição inclui `backend.agents` (10 agentes) no mesmo checkout. Visão geral do
+sistema: `README.md` na raiz e `docs/ARQUITETURA_COMPLETA.md`.
 O módulo `backend/memory` (SQLite e RAG) entrou na `main` pelo PR #3. O RAG já é
 composto pelos agentes e a API agora usa `SQLiteMemory` por padrão, no arquivo
 ignorado `backend/api/.local/session-memory.sqlite3`. Defina `APP_MEMORY_PATH` para
@@ -156,7 +155,7 @@ fluxo completo via API/Gemini; a suíte automatizada usa OpenCode/MCP simulados.
 O catálogo e o classificador do modo demo pertencem a `backend/agents`; as correções
 de relevância e retomada do Claude (PRs #6/#7) foram integradas nesta branch.
 Correspondência lexical continua limitada para sinônimos e descrições incompletas;
-o alinhamento com os agentes está registrado em `ATUALIZACAO.md`.
+o alinhamento com os agentes está registrado em `docs/historico/ATUALIZACAO.md`.
 
 ## Runtime
 

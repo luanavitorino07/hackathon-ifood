@@ -52,7 +52,7 @@ pedido explícito; saúde nunca cede). "Fechado/pode ser" após uma sugestão re
 
 Clientes fictícios da apresentação: `backend/memory/demo_seed.py` (cadastro, pedidos anteriores e
 resultado das estratégias), escolhidos no chat pelo nome no `initial_context` (`persona_key`).
-**O runtime real precisa suportar a chamada sem ferramentas** (ver `ATUALIZACAO.md`); até lá, a reserva vale.
+O runtime real faz essa chamada sem ferramentas pelo agente `ifood-reasoning` do OpenCode (só `StructuredOutput`).
 
 ## Portas (`ports.py`) — quem implementa
 
