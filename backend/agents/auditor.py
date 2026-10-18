@@ -26,7 +26,10 @@ def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
             issues.append(f"Item {it['product_id']} pertence a outro restaurante")
         if offer is not None and offer.is_open is False:
             issues.append(f"Restaurante de {it['product_id']} está fechado")
-        if offer is not None and st.query_terms and score(offer, st.query_terms) == 0:
+        judged = st.ai_fit.get(it["product_id"])
+        if judged is not None and judged[0] == "nao":
+            issues.append(f"Item {it['product_id']} rejeitado pelo Curador: {judged[1]}")
+        elif judged is None and offer is not None and st.query_terms and score(offer, st.query_terms) == 0:
             issues.append(f"Item {it['product_id']} não corresponde ao pedido")
         if it["quantity"] <= 0:
             issues.append(f"Quantidade inválida em {it['product_id']}")

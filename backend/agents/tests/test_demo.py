@@ -9,7 +9,8 @@ from backend.agents.ports import RuntimeCall
 
 def call(text, filters=None):
     ctx = {"dietary_filters": filters} if filters else {}
-    return RuntimeCall("researcher", "t", "s", "", f"Pedido do cliente: {text}\nOrçamento: None", {}, context=ctx)
+    return RuntimeCall("researcher", "t", "s", "", f"Pedido do cliente: {text}\nOrçamento: None", {},
+                       allowed_tools=("offer_search",), context=ctx)
 
 
 class DemoRuntimeTest(unittest.TestCase):
@@ -70,7 +71,9 @@ class DemoConversationTest(unittest.TestCase):
         buf = io.StringIO()
         run_conversation(["quero comida para 2 pessoas até R$ 200"], out=buf, client_id="anon",
                          initial_context={"preferences": ["pizza"], "restrictions": []})
-        self.assertIn("Combina com sua preferência: pizza.", buf.getvalue())
+        out = buf.getvalue()
+        self.assertIn("Sugiro Pizzaria Forno Demo", out)
+        self.assertIn("combina com o que você gosta de pedir", out)  # argumento da IA simulada
 
     def test_preference_and_demo_history_are_not_repeated(self):
         buf = io.StringIO()
