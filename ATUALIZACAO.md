@@ -3,6 +3,53 @@
 > Leia antes de continuar. Este arquivo resume o estado da `main` após o merge do PR #2
 > (`b6b7dbe`). As regras de trabalho continuam em `AGENTS.md`; o produto e o contrato em `PROMPT.md`.
 
+## Tarefa para Claude / Gabriel — retomada incremental dos agentes (18/10/2026)
+
+**Solicitação explícita do Lorenzo:** corrigir em `backend/agents/**` a continuação
+do atendimento para NÃO pesquisar tudo novamente quando mudar somente quantidade
+de pessoas ou orçamento. Priorizar esta retomada; não confundir com reenvio HTTP.
+
+### Base já integrada e verificada
+
+- O PR #4 foi mergeado na `main` em `d57d96b`; o commit `27a48da` está no histórico
+  da `main`. Ele corrige o dispatch duplicado da MESMA mensagem e configura São Carlos.
+- A retomada de mensagens NOVAS relacionadas continua pendente, tanto com memória
+  temporária quanto com `SQLiteMemory`. O RAG/SQLite do PR #3 não resolve essa lógica.
+
+### Alteração esperada no módulo dos agentes
+
+1. Em `Orchestrator.handle_message`, carregar os candidatos e sua origem da memória
+   do MESMO atendimento, em vez de criar a rodada sempre sem ofertas.
+2. Comparar os critérios anteriores com a alteração atual. Se somente quantidade
+   ou orçamento mudou e os candidatos continuam válidos, executar planejamento,
+   auditoria e demais etapas necessárias usando essas ofertas; não chamar o runtime.
+3. Preservar categoria/preferências, localização e restrições não alteradas pelo
+   cliente; não apagar a pesquisa anterior nem assumir que uma alteração pequena
+   inicia um atendimento novo.
+4. Associar assinatura e validade à pesquisa (categoria/consulta, localização,
+   filtros, modo/origem e horário). Mudanças relevantes, validade expirada, pedido
+   explícito de atualização ou falta de candidatos adequados podem exigir nova busca.
+   Não reutilizar dados entre atendimentos/clientes ou entre filtros incompatíveis.
+5. Não congelar preços/disponibilidade até o cliente encerrar. Reutilizar a sessão
+   OpenCode sozinho não resolve: a decisão de retomar deve acontecer antes da busca.
+
+### Aceite e divisão de trabalho
+
+- **Claude:** implementação e testes de domínio em `backend/agents/**`, usando a
+  porta de memória existente; não editar API/integrations nesta tarefa.
+- **Codex:** regressões HTTP e revisão da integração. Depois que a correção entrar,
+  retirar em coordenação a marca `xfail` do teste de aceite da API e validar novamente.
+- Teste existente: `backend/api/tests/test_message_continuity.py::test_related_followup_should_reuse_existing_candidates`.
+  Duas variantes (`ephemeral` e `sqlite`), hoje `xfail(strict=True)`: primeiro pedido
+  + "Agora são 3 pessoas" devem somar **1 pesquisa total**, não 2.
+- Acrescentar aceite equivalente para mudança de orçamento; testar quantidade E
+  orçamento alterados em sequência, manutenção das restrições e isolamento de sessões.
+- Testar também mudança de categoria/local/filtro e atualização explícita, para
+  comprovar que o reaproveitamento não devolve ofertas incompatíveis ou vencidas.
+- Todos os testes com `FakeRuntime`/catálogo simulado: **nenhuma chamada Gemini ou iFood**.
+- Publicar aqui a resposta do Claude com arquivos alterados, testes e commit/PR.
+  Este registro é encaminhamento; não significa que o Claude já iniciou ou concluiu.
+
 ## Novo: módulo de memória implementado (PR #3, `52f0c93`)
 
 **`backend/memory/**` agora é do Claude Code**, por decisão humana (o Codex da memória não tinha
@@ -187,7 +234,7 @@ Nesta revisão somente este documento foi alterado. Código de agentes, API e ru
 - Reprodução com `SQLiteMemory(":memory:")` injetada: primeira mensagem fez 1 chamada e gravou 3 candidatos; "Pode ser mais barato?" fez mais 1 chamada, apesar dos mesmos candidatos salvos. Trocar o armazenamento não muda a decisão de pesquisar.
 - Persistir `MemoryPort` não persiste automaticamente o cadastro/autorização das sessões HTTP, as projeções e o histórico SSE, nem a idempotência HTTP. Não anunciar retomada após reiniciar a API somente por ligar o SQLite.
 
-### Codex — corrigido na branch `feat/integrations`
+### Codex — correção integrada à `main` pelo PR #4 (`d57d96b`)
 
 - Corrigido disparo duplo no reenvio da MESMA mensagem: `accept_message_once` decide atomicamente, sob o lock do estado, se o envio é novo. O endpoint só agenda a execução para o primeiro aceite. Nenhum DTO ou endpoint público foi alterado.
 - Testado com memória efêmera e SQLite: reenvio sequencial, 5 reenvios simultâneos, ID igual com conteúdo diferente (`409`), mesmo ID em outra sessão (independente), falha de runtime sem repetição automática e nova tentativa explícita com ID novo.
@@ -215,4 +262,4 @@ Nesta revisão somente este documento foi alterado. Código de agentes, API e ru
 - Suíte completa offline: **160 aprovados, 1 teste real opt-in pulado e 2 falhas esperadas (`xfail`) de continuidade**, uma com cada memória. Sem Gemini/iFood, sem pedidos/pagamentos.
 - Testes de localização conferem as coordenadas enviadas no prompt ao OpenCode simulado, precedência de localização explícita, ausência de fallback não solicitado, preset inválido e substituição de São Paulo no launcher.
 - Lint dos arquivos Python alterados: aprovado. Não foram ligadas automaticamente persistência SQLite na API nem a opção de gestor em modo real; continuam pendentes.
-- Código desta correção exige PR para entrar na `main`. A tentativa anterior de publicar só o relatório diretamente na `main` foi bloqueada pela revisão de segurança; até integrar este documento na `main`, o Claude deve consultar também `feat/integrations`. Não afirmar que a publicação na `main` já ocorreu.
+- Atualização de publicação: código e relatório desta entrega entraram na `main` pelo PR #4, merge `d57d96b`, com autorização do Lorenzo. A pendência de publicação descrita anteriormente foi resolvida. A retomada dos agentes NÃO foi implementada nesse PR; ver tarefa explícita no topo deste arquivo.
