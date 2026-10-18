@@ -53,11 +53,13 @@ class DemoConversationTest(unittest.TestCase):
         for e in sink.events:
             self.assertEqual(set(e["payload"]), PAYLOAD_KEYS[e["type"]])
 
-    def test_realistic_mode_shows_unverified_restriction(self):
+    def test_realistic_mode_restriction_is_evaluated_by_ai(self):
         buf = io.StringIO()
         run_conversation(["quero pizza para 2 pessoas até R$ 200"], out=buf, with_tags=False,
                          initial_context={"restrictions": ["vegetariana"], "preferences": []})
-        self.assertIn("não comprovada", buf.getvalue())
+        out = buf.getvalue()  # sem tags do iFood: a IA (simulada) avalia; dieta por escolha não gera aviso
+        self.assertIn("Pizza Margherita", out)
+        self.assertNotIn("Calabresa", out)
 
     def test_main_prompt_scenario_works_in_both_modes(self):
         for tags in (True, False):

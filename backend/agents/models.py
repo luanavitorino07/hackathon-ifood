@@ -33,6 +33,11 @@ RESTRICTION_LABELS = {"vegetarian": "vegetariana", "vegan": "vegana", "gluten-fr
                       "lactose-free": "sem lactose", "sugar-free": "sem açúcar"}
 
 
+# Dieta por escolha: a avaliação da IA basta, sem aviso ao cliente. As demais (saúde: lactose, glúten,
+# alergias, intolerâncias) avaliadas pela IA saem com um aviso curto para confirmar com o restaurante.
+LIFESTYLE_RESTRICTIONS = frozenset({"vegetarian", "vegan"})
+
+
 def base_restriction(restriction: str) -> str:
     """'vegan_option' -> 'vegan'; 'vegetarian_option' -> 'vegetarian'."""
     return restriction[:-len(OPTION_SUFFIX)] if restriction.endswith(OPTION_SUFFIX) else restriction
@@ -187,6 +192,9 @@ class WorkingState:
     ai_serves: dict[str, int] = field(default_factory=dict)  # product_id -> pessoas que o item serve (IA)
     pitch: str | None = None  # argumento de venda escrito pela IA do estrategista
     request_summary: str | None = None  # o pedido entendido pela IA do Intérprete (com o contexto da conversa)
+    extra_terms: tuple[str, ...] = ()  # complementos pedidos junto (ex.: "coca zero"), buscados à parte
+    extra_of: dict[str, str] = field(default_factory=dict)  # product_id -> complemento que ele atende
+    ai_includes: dict[str, tuple[str, ...]] = field(default_factory=dict)  # prato que já traz o complemento (combo)
     ai_restrictions: dict[str, tuple[str, ...]] = field(default_factory=dict)  # product_id -> restrições atendidas (IA)
     research_hint: str | None = None  # nova busca sugerida pelo Curador quando nada serve
     strategy: str | None = None  # estratégia de venda escolhida pelo Estrategista

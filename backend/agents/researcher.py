@@ -119,6 +119,26 @@ class Researcher:
         marks = tuple(filtered_mark(f) for f in filters)  # registra o filtro pedido; não é prova
         return outcome, [replace(o, tags=o.tags + marks) for o in offers], dropped
 
+    def _search_extras(self, ctx: AgentContext, origin: str, offers: list[Offer],
+                       limitations: list[str]) -> dict[str, int]:
+        """Uma busca por complemento (ex.: 'coca zero'); as ofertas entram marcadas em `extra_of`."""
+        found: dict[str, int] = {}
+        known = {o.product_id for o in offers}
+        for extra in ctx.state.extra_terms:
+            prompt = (f"Pedido do cliente: {ctx.session.message_text}\nProduto desejado: {extra}. Use somente "
+                      "estes termos na query da busca e ordene por relevância.")
+            outcome, extra_offers, _ = self._search(ctx, prompt, [])
+            if not outcome.ok or origin_of(outcome) != origin:
+                limitations.append(f"busca do complemento '{extra}' indisponível")
+                continue
+            found[extra] = len(extra_offers)
+            for o in extra_offers:
+                ctx.state.extra_of.setdefault(o.product_id, extra)
+                if o.product_id not in known:
+                    offers.append(o)
+                    known.add(o.product_id)
+        return found
+
     def run(self, ctx: AgentContext) -> AgentResult:
         c = ctx.state.constraints
         terms = ctx.state.query_terms
@@ -158,14 +178,16 @@ class Researcher:
                 offers = list(by_id.values())
             else:
                 limitations.append(f"busca adicional com filtro {flt} indisponível")
+        found_extras = self._search_extras(ctx, origin, offers, limitations)
         ctx.state.offers, ctx.state.data_origin = offers, origin  # type: ignore[assignment]
         if not offers:
             return AgentResult("researcher", "needs_info", {"offers": 0},
                                "Nenhuma oferta válida encontrada.", "low", limitations,
                                ["ofertas disponíveis"])
         merchants = {o.merchant_id for o in offers}
+        extra_note = "".join(f" + {n} de '{t}'" for t, n in found_extras.items())
         ctx.events.agent_message("researcher", "curator", ctx.task_id, "proposal",
-                                 f"Trouxe {len(offers)} oferta(s) de '{' '.join(terms) or 'comida'}'; "
+                                 f"Trouxe {len(offers)} oferta(s) de '{' '.join(terms) or 'comida'}'{extra_note}; "
                                  "pode julgar se atendem ao pedido?")
         return AgentResult(
             "researcher", "done", {"offers": len(offers), "merchants": len(merchants), "origin": origin},

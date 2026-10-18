@@ -5,9 +5,9 @@ from collections import defaultdict
 from typing import Any
 
 from .events import new_id
-from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, Constraints, Offer,
-                     SessionContext, WorkingState, filtered_mark, option_requirements, restriction_label,
-                     slug, soft_unverified, tag_requirements)
+from .models import (LIFESTYLE_RESTRICTIONS, VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, Constraints,
+                     Offer, SessionContext, WorkingState, base_restriction, filtered_mark, option_requirements,
+                     restriction_label, slug, soft_unverified, tag_requirements)
 from .registry import AgentContext, AgentDefinition
 from .relevance import relevant
 
@@ -32,7 +32,8 @@ def ai_only(offer: Offer, restriction: str, ai: dict[str, tuple[str, ...]]) -> b
 
 def _pick(pool: list[Offer], units: int, c: Constraints, premium: bool, required: tuple[str, ...],
           veg_enforced: bool, serves: dict[str, int] | None = None,
-          ai: dict[str, tuple[str, ...]] | None = None) -> list[tuple[Offer, int]] | None:
+          ai: dict[str, tuple[str, ...]] | None = None,
+          combo: set[str] | None = None) -> list[tuple[Offer, int]] | None:
     """Escolhe itens de um restaurante até servir `units` pessoas (a IA informa quantas pessoas cada
     item serve; sem isso, 1 por pessoa). None se as restrições não puderem ser atendidas."""
     serves, ai = serves or {}, ai or {}
@@ -44,6 +45,8 @@ def _pick(pool: list[Offer], units: int, c: Constraints, premium: bool, required
         return None
     # econômica: menor preço por pessoa atendida
     ordered = sorted(eligible, key=lambda o: (o.unit_price_cents / portions(o), o.product_id), reverse=premium)
+    if combo:  # pediu complemento: combos que já o trazem vêm primeiro
+        ordered.sort(key=lambda o: o.product_id not in combo)
     chosen: list[Offer] = []
     if VEGETARIAN_OPTION in c.dietary and VEGETARIAN_ALL not in c.dietary:
         options = [o for o in ordered if veg(o)]
@@ -93,6 +96,35 @@ def _same_items(a: dict[str, Any], b: dict[str, Any]) -> bool:
     return a["merchant_id"] == b["merchant_id"] and key(a) == key(b)
 
 
+def _restriction_reason(c: Constraints, by_ai: list[str], unverified: tuple[str, ...] = ()) -> str:
+    if not c.dietary:
+        return "Sem restrições alimentares informadas"
+    if unverified:  # reserva sem IA: não afirmar o que não foi comprovado
+        return "Considera as restrições: " + ", ".join(restriction_label(r) for r in c.dietary)
+    labels = ", ".join(restriction_label(r) + (" (avaliada pela IA)" if base_restriction(r) in by_ai else "")
+                       for r in c.dietary)
+    return f"Atende: {labels}"
+
+
+def _extras(st: WorkingState, offers: list[Offer], merchant_id: str, units: int,
+            required: tuple[str, ...], bundled: set[str] = frozenset()) -> tuple[list[tuple[Offer, int]], list[str]]:
+    """Complementos pedidos (ex.: 'coca zero') no MESMO restaurante: um por pessoa, o mais adequado e barato.
+    Se o prato escolhido já é um combo que traz o complemento (`bundled`), não acrescenta."""
+    picked, missing = [], []
+    for extra in st.extra_terms:
+        if extra in bundled:
+            continue
+        fit = lambda o: st.ai_fit.get(o.product_id, ("parcial", ""))[0]  # noqa: E731
+        options = [o for o in offers if o.merchant_id == merchant_id and st.extra_of.get(o.product_id) == extra
+                   and fit(o) != "nao" and has_tags(o, required, st.ai_restrictions)]
+        if not options:
+            missing.append(extra)
+            continue
+        best = min(options, key=lambda o: (fit(o) != "sim", o.unit_price_cents))
+        picked.append((best, units))
+    return picked, missing
+
+
 def _ai_select(st: WorkingState, offers: list[Offer]) -> tuple[list[Offer], set[str]] | None:
     """Seleção pelo julgamento da IA do Curador; None se não houver julgamento."""
     if not st.ai_fit:
@@ -125,13 +157,17 @@ class Planner:
 
     def run(self, ctx: AgentContext) -> AgentResult:
         st, c = ctx.state, ctx.state.constraints
-        required = tag_requirements(c, st.offers)
-        unverified = soft_unverified(c, st.offers)
-        veg_enforced = "vegetarian" not in unverified
+        # Com o Curador (IA) avaliando restrições, toda restrição exige tag do iFood ou avaliação da IA;
+        # sem IA, as brandas passam pelo filtro de busca com aviso (comportamento de reserva).
+        ai_ran = bool(st.ai_fit)
+        required = tag_requirements(c, () if ai_ran else st.offers)
+        unverified = () if ai_ran else soft_unverified(c, st.offers)
+        veg_enforced = ai_ran or "vegetarian" not in unverified
         units = c.party_size or 1
         open_offers = [o for o in st.offers if o.is_open is not False]
         closed = len(st.offers) - len(open_offers)
-        pool_offers, missing_terms = self._select(st, open_offers)
+        main_offers = [o for o in open_offers if o.product_id not in st.extra_of]
+        pool_offers, missing_terms = self._select(st, main_offers)
         if not pool_offers and (st.query_terms or st.relevance_miss):
             st.relevance_miss = True
             st.recommendations = []
@@ -144,28 +180,34 @@ class Planner:
             by_merchant[o.merchant_id].append(o)
         recs: list[dict[str, Any]] = []
         skipped_budget = skipped_restriction = 0
+        checked = required + option_requirements(c) + (
+            ("vegetarian",) if VEGETARIAN_ALL in c.dietary or VEGETARIAN_OPTION in c.dietary else ())
         for pool in by_merchant.values():
             for premium in (False, True):
                 picked = _pick(pool, units, c, premium, required, veg_enforced, st.ai_serves,
-                               st.ai_restrictions)
+                               st.ai_restrictions, set(st.ai_includes))
                 if picked is None:
                     skipped_restriction += 1
                     continue
-                labels = ", ".join(restriction_label(r) for r in c.dietary)
-                reasons = [f"Considera as restrições: {labels}" if c.dietary else "Sem restrições alimentares informadas"]
+                bundled = {x for o, _ in picked for x in st.ai_includes.get(o.product_id, ())}
+                extras, missing_extras = _extras(st, open_offers, pool[0].merchant_id, units, required, bundled)
+                picked = picked + extras
+                by_ai = sorted({r for o, _ in picked for r in checked if ai_only(o, r, st.ai_restrictions)})
+                reasons = [_restriction_reason(c, by_ai, unverified)]
+                if st.extra_terms and not missing_extras:
+                    reasons.append("Inclui " + ", ".join(st.extra_terms))
                 warnings: list[str] = [
                     f"Restrição '{r}' não comprovada pelo iFood (filtro de busca solicitado): "
                     "confira a descrição do item" for r in unverified]
-                for r in sorted({r for o, _ in picked for r in required + option_requirements(c)
-                                 + (("vegetarian",) if VEGETARIAN_ALL in c.dietary or VEGETARIAN_OPTION in c.dietary
-                                    else ()) if ai_only(o, r, st.ai_restrictions)}):
-                    warnings.append(f"Restrição '{restriction_label(r)}' avaliada pela IA pelo nome do item "
-                                    "(o iFood não informa): confirme com o restaurante antes de pedir")
-                if missing_terms:
-                    wanted = st.request_summary or " ".join(sorted(missing_terms))
-                    warnings.append(f"Não encontrei exatamente o que você pediu ({wanted}): "
-                                    "esta é a opção mais próxima")
+                for r in by_ai:
+                    if r not in LIFESTYLE_RESTRICTIONS:  # saúde: aviso curto para confirmar
+                        warnings.append(f"Restrição '{restriction_label(r)}' avaliada pela IA: confirme com o restaurante")
+                for extra in missing_extras:
+                    warnings.append(f"Sem '{extra}' neste restaurante na busca; peça à parte")
                 rec = build_recommendation(pool[0], picked, st.data_origin, reasons, warnings)
+                if missing_terms and not ai_ran:  # só na reserva por palavras; com IA o Curador já filtrou
+                    rec["reasons"].append("Opção mais próxima do que você pediu")
+                rec["_missing_extras"] = len(missing_extras)
                 known = rec["total_cents"] if rec["total_cents"] is not None else rec["subtotal_cents"]
                 if st.price_ceiling_cents is not None:
                     if known >= st.price_ceiling_cents:
@@ -173,23 +215,21 @@ class Planner:
                     reasons.append("Mais barata que a opção anterior")
                 if rec["total_cents"] is None:
                     warnings.append("Total indisponível: taxa de entrega ou outras taxas desconhecidas")
-                if c.budget_cents is None:
-                    warnings.append("Orçamento não informado")
-                elif known > c.budget_cents:
+                if c.budget_cents is not None and known > c.budget_cents:
                     skipped_budget += 1
                     if st.cheapest_over_budget_cents is None or known < st.cheapest_over_budget_cents:
                         st.cheapest_over_budget_cents = known
                     continue
-                else:
+                if c.budget_cents is not None:
                     reasons.append("Dentro do orçamento")
                 if any(_same_items(r, rec) for r in recs):
                     continue
                 recs.append(rec)
-        recs.sort(key=lambda r: (r["total_cents"] is None, r["total_cents"] or r["subtotal_cents"]))
-        # variedade: a melhor opção de cada restaurante primeiro, depois as demais por preço
+        # quem tem todos os complementos pedidos vem antes
+        recs.sort(key=lambda r: (r.pop("_missing_extras"), r["total_cents"] is None,
+                                 r["total_cents"] or r["subtotal_cents"]))
         firsts = [r for i, r in enumerate(recs) if all(o["merchant_id"] != r["merchant_id"] for o in recs[:i])]
         st.recommendations = (firsts + [r for r in recs if r not in firsts])[:MAX_RECOMMENDATIONS]
-        st.recommendations.sort(key=lambda r: (r["total_cents"] is None, r["total_cents"] or r["subtotal_cents"]))
         limitations = []
         if closed:
             limitations.append(f"{closed} oferta(s) de restaurante fechado descartada(s)")

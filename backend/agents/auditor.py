@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models import (VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, SessionContext, WorkingState,
+from .models import (LIFESTYLE_RESTRICTIONS, VEGETARIAN_ALL, VEGETARIAN_OPTION, AgentResult, SessionContext, WorkingState,
                      filtered_mark, option_requirements, restriction_label, slug, soft_unverified,
                      tag_requirements)
 from .registry import AgentContext, AgentDefinition
@@ -28,9 +28,11 @@ def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
         if offer is not None and offer.is_open is False:
             issues.append(f"Restaurante de {it['product_id']} está fechado")
         judged = st.ai_fit.get(it["product_id"])
+        extra = it["product_id"] in st.extra_of  # complemento (bebida etc.): julgado contra o complemento
         if judged is not None and judged[0] == "nao":
             issues.append(f"Item {it['product_id']} rejeitado pelo Curador: {judged[1]}")
-        elif judged is None and offer is not None and st.query_terms and score(offer, st.query_terms) == 0:
+        elif (judged is None and not extra and offer is not None and st.query_terms
+              and score(offer, st.query_terms) == 0):
             issues.append(f"Item {it['product_id']} não corresponde ao pedido")
         if it["quantity"] <= 0:
             issues.append(f"Quantidade inválida em {it['product_id']}")
@@ -50,9 +52,9 @@ def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
         issues.append("Acima do orçamento informado")
     if st.price_ceiling_cents is not None and shown >= st.price_ceiling_cents:
         issues.append("Não é mais barata que a opção anterior")
-    unverified = soft_unverified(c, st.offers)
-    veg = [by_id[i["product_id"]].tags for i in items if i["product_id"] in by_id]
-    proven = "vegetarian" not in unverified
+    ai_ran = bool(st.ai_fit)  # com o Curador (IA), restrições brandas também exigem tag ou avaliação da IA
+    unverified = () if ai_ran else soft_unverified(c, st.offers)
+    proven = ai_ran or "vegetarian" not in soft_unverified(c, st.offers)
     ok_veg = (lambda t: "vegetarian" in t) if proven else \
         (lambda t: "vegetarian" in t or filtered_mark("VEGETARIAN") in t)
     ai = st.ai_restrictions
@@ -80,7 +82,7 @@ def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
     for r in unverified:  # restrição branda sem tag: só passa se a proposta avisar o cliente
         if not any(f"'{r}' não comprovada" in w for w in rec["warnings"]):
             issues.append(f"Restrição '{r}' não comprovada sem aviso ao cliente")
-    for req in tag_requirements(c, st.offers):  # sem tag do iFood nem avaliação da IA, nunca é aprovada
+    for req in tag_requirements(c, () if ai_ran else st.offers):  # sem tag nem avaliação da IA, reprova
         for it in items:
             kind = proof(it["product_id"], req) if it["product_id"] in by_id else None
             if kind is None:
@@ -88,10 +90,11 @@ def audit_recommendation(rec: dict[str, Any], st: WorkingState) -> list[str]:
                 break
             if kind == "ia":
                 by_ai.add(req)
-    for req in by_ai:  # avaliação da IA só passa se o cliente for avisado de que não há comprovação
+    for req in by_ai - LIFESTYLE_RESTRICTIONS:  # saúde avaliada pela IA só passa com aviso ao cliente
         if not any(f"'{restriction_label(req)}' avaliada pela IA" in w for w in rec["warnings"]):
             issues.append(f"Restrição '{restriction_label(req)}' avaliada pela IA sem aviso ao cliente")
-    served = sum(i["quantity"] * st.ai_serves.get(i["product_id"], 1) for i in items)
+    served = sum(i["quantity"] * st.ai_serves.get(i["product_id"], 1) for i in items
+                 if i["product_id"] not in st.extra_of)
     if c.party_size and served < c.party_size:
         issues.append("Quantidade insuficiente para o número de pessoas")
     return issues
