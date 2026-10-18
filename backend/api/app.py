@@ -255,7 +255,9 @@ def create_app(
         if request.app.state.memory is not None:
             saved = await asyncio.to_thread(request.app.state.memory.load, payload.session_id)
             initial_context = saved.state.get("initial_context")
-        accepted = await _state(request).accept_message(payload, identity)
+        accepted, is_new = await _state(request).accept_message_once(payload, identity)
+        if not is_new:
+            return accepted
         client_id = await _state(request).session_client_id(payload.session_id, identity)
         background_tasks.add_task(
             _dispatch_message,

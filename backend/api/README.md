@@ -3,8 +3,10 @@
 Esta composição já inclui `backend.agents` integrado de `feat/agents@9c7180a`.
 API, runtime e os seis agentes estão no mesmo checkout; não é mais necessário
 exportar os agentes para uma pasta temporária ou configurar um `PYTHONPATH` extra.
-A branch de memória persistente não foi integrada. A API usa uma memória
-operacional temporária, substituível pelo contrato `MemoryPort`.
+O módulo `backend/memory` (SQLite e RAG) entrou na `main` pelo PR #3. O RAG já é
+composto pelos agentes; a API ainda usa memória operacional temporária por padrão.
+É possível injetar `SQLiteMemory` em `build_application(memory=...)`, mas isso não
+persiste o cadastro de sessões HTTP, projeções, histórico SSE ou idempotência da API.
 
 Na raiz do projeto, com as dependências instaladas:
 
@@ -66,18 +68,51 @@ no mesmo projeto e servidor OpenCode iniciado em `127.0.0.1:4096`:
 
 ```bat
 set APP_RUNTIME_MODE=real
-set IFOOD_SANDBOX_LATITUDE=-23.5505
-set IFOOD_SANDBOX_LONGITUDE=-46.6333
+set IFOOD_SANDBOX_LATITUDE=-22.0175
+set IFOOD_SANDBOX_LONGITUDE=-47.89083333
 set IFOOD_FALLBACK_LOCATION_SOURCE=public_test
 uv run --python 3.12 uvicorn backend.api.main:app --host 127.0.0.1 --port 8000
 ```
 
-Essas coordenadas são referência pública de teste em São Paulo, NÃO um sandbox
+Essas coordenadas são referência pública de teste em São Carlos/SP, NÃO um sandbox
 confirmado nem a localização do comprador. `public_test` registra essa distinção
 no resumo de atividade. Para um sandbox oficial, configure suas coordenadas e
 `IFOOD_FALLBACK_LOCATION_SOURCE=sandbox`. Sem localização válida, a busca falha
 explicitamente com `LOCATION_REQUIRED`. Os comandos acima alteram só o processo
 do terminal, não as variáveis permanentes do Windows.
+
+Para evitar herdar as coordenadas antigas de São Paulo, o launcher local já
+seleciona São Carlos e vincula o servidor somente a `127.0.0.1`:
+
+```text
+python -m backend.api.run_local --real
+```
+
+Sem `--real`, esse comando inicia em demo, sem consumir IA. O launcher limpa
+coordenadas antigas somente do seu processo; não altera configurações permanentes
+do computador. Um servidor já iniciado precisa ser reiniciado com esse comando.
+Também existe o preset opt-in `IFOOD_TEST_LOCATION=sao_carlos`; fora do launcher,
+coordenadas explícitas no ambiente têm prioridade. Sem preset nem coordenadas,
+o backend continua sem presumir localização. Coordenadas válidas no contexto do
+runtime prevalecem sobre o fallback de teste. Texto "São Carlos" sozinho não é geocodificado.
+
+Referência pública aproximada da cidade:
+[GeoNames](https://www.geonames.org/advanced-search.html?country=BR&q=Sao+Carlos).
+Não é um endereço de entrega e não confirma cobertura do iFood; para entrega real,
+é necessário fornecer/validar a localização específica do comprador.
+
+### Continuidade e reenvios
+
+Reenvios HTTP com o mesmo `session_id` e `client_message_id` agora retornam o aceite
+anterior sem agendar os agentes de novo, inclusive em envios simultâneos. Conteúdo
+diferente no mesmo ID continua retornando `409`. Essa garantia é local ao processo;
+o estado HTTP ainda não está persistido. Para nova tentativa explícita após falha,
+envie uma mensagem com ID novo.
+
+Nova mensagem relacionada ainda provoca nova busca na versão atual dos agentes,
+mesmo com SQLite: o orquestrador não reidrata os candidatos. Há teste de aceite
+marcado `xfail(strict=True)` em `test_message_continuity.py` para o Claude corrigir;
+isso não deve ser apresentado como continuidade implementada.
 
 Em outro terminal, o teste de fumaça real é opt-in:
 

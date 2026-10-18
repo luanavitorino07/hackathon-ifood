@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 IFOOD_MCP_URL = "https://consumer-mcp.ifood.com.br/marketplace"
+# Referência pública da cidade, não endereço do comprador nem sandbox oficial.
+# https://www.geonames.org/advanced-search.html?country=BR&q=Sao+Carlos
+SAO_CARLOS_TEST_COORDINATES = (-22.0175, -47.89083333)
 
 
 def _positive_float(value: str | None, default: float) -> float:
@@ -39,6 +42,11 @@ class SandboxLocation:
         latitude = os.getenv("IFOOD_SANDBOX_LATITUDE")
         longitude = os.getenv("IFOOD_SANDBOX_LONGITUDE")
         if latitude is None and longitude is None:
+            preset = os.getenv("IFOOD_TEST_LOCATION")
+            if preset == "sao_carlos":
+                return cls(*SAO_CARLOS_TEST_COORDINATES, source="public_test")
+            if preset:
+                raise ValueError("IFOOD_TEST_LOCATION desconhecida; use sao_carlos")
             return None
         if latitude is None or longitude is None:
             raise ValueError(
