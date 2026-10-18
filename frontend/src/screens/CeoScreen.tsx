@@ -178,7 +178,7 @@ export function CeoScreen() {
                 { label: "Atendimentos", value: sessions },
                 { label: "Pediram comida", value: x.withOrderIntent },
                 { label: "Receberam recomendação", value: x.withRecommendation },
-                { label: "Enviaram pedido", value: x.ordersSubmitted },
+                { label: "Aceitaram a recomendação", value: x.salesClosed + x.ordersSubmitted },
               ]}
             />
           </Card>
@@ -220,6 +220,45 @@ export function CeoScreen() {
           </Card>
         </Col>
       </Row>
+
+      <Card
+        title="Monitoria de estratégias de venda"
+        right={<Pill text={`${x.salesClosed} venda(s) fechada(s) aqui`} tone={x.salesClosed ? "green" : "gray"} />}
+      >
+        <Text style={s.muted}>
+          Qual estratégia do Estrategista (IA) está vendendo: ofertas aceitas pelo cliente sobre ofertas feitas.
+          Inclui o histórico da memória (com clientes fictícios da demonstração) e os atendimentos desta tela.
+        </Text>
+        {x.strategies.length === 0 && (
+          <Text style={s.empty}>Aparece depois do primeiro pedido atendido.</Text>
+        )}
+        {x.strategies.map((st, i) => {
+          const best = i === 0 && st.rate != null;
+          const worst = i === x.strategies.length - 1 && x.strategies.length > 1 && st.rate != null;
+          return (
+            <View key={st.name} style={{ gap: 6 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <Text style={[s.text, { flex: 1, fontSize: 15, lineHeight: 21, fontFamily: "InterSemiBold" }]}>{st.name}</Text>
+                {best && <Pill text="mais vende" tone="green" />}
+                {worst && <Pill text="menos vende" tone="amber" />}
+                <Text style={[s.text, { fontSize: 15 }]}>
+                  {percent(st.rate)} · {st.accepted}/{st.offered}
+                </Text>
+              </View>
+              <View style={{ height: 8, borderRadius: 4, backgroundColor: "#F1F1F1", overflow: "hidden" }}>
+                <View
+                  style={{
+                    height: 8,
+                    borderRadius: 4,
+                    width: `${Math.round(100 * (st.rate ?? 0))}%`,
+                    backgroundColor: best ? colors.green : worst ? colors.amber : colors.red,
+                  }}
+                />
+              </View>
+            </View>
+          );
+        })}
+      </Card>
 
       <Row wide={wide}>
         <Col>

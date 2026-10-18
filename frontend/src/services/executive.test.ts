@@ -58,3 +58,21 @@ test("sem dados nada é inventado", () => {
   assert.equal(x.recommendationRate, null);
   assert.equal(x.averageResponseMs, null);
 });
+
+test("monitoria soma o retrato da memória com o que veio depois", () => {
+  const strat = { actor: { kind: "agent", id: "sales_strategist" }, recipient: { kind: "agent", id: "orchestrator" } } as Partial<OfficeEvent>;
+  const msg = (summary: string, at: string, extra: Partial<OfficeEvent> = {}) =>
+    ev("agent_message", { message_id: `x${seq}`, task_id: "t", channel: "proposal", summary }, extra, at);
+  const h: SessionHistory = {
+    session_id: "s2", client_alias: "Cliente #2", status: "active", updated_at: "2026-10-18T11:00:00Z",
+    events: [
+      msg("Desempenho das estratégias: Favorito do cliente 3/4; Experiência premium 1/4", "2026-10-18T11:00:00Z"),
+      msg("Estratégia aplicada: Experiência premium — cliente fiel", "2026-10-18T11:00:01Z", strat),
+      msg("Venda fechada: cliente aceitou Pizzaria (estratégia: Experiência premium)", "2026-10-18T11:00:09Z"),
+    ],
+  };
+  const x = computeExecutive([h]);
+  assert.deepEqual(x.strategies.map((s) => [s.name, s.accepted, s.offered]), [
+    ["Favorito do cliente", 3, 4], ["Experiência premium", 2, 5]]);
+  assert.equal(x.salesClosed, 1);
+});

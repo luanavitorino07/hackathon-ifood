@@ -38,10 +38,12 @@ import { faBriefcase } from "@fortawesome/free-solid-svg-icons/faBriefcase";
 import { faComments } from "@fortawesome/free-solid-svg-icons/faComments";
 import { faUtensils } from "@fortawesome/free-solid-svg-icons/faUtensils";
 import { faCircleCheck } from "@fortawesome/free-solid-svg-icons/faCircleCheck";
+import { faCommentDots } from "@fortawesome/free-solid-svg-icons/faCommentDots";
 
 // Para trocar o ícone de um agente, altere este mapa.
 export const agentIcons: Record<string, IconDefinition> = {
   orchestrator: faSitemap,
+  interpreter: faCommentDots,
   researcher: faMagnifyingGlass,
   curator: faFilter,
   planner: faFileLines,
