@@ -67,6 +67,17 @@ class UsageTest(unittest.TestCase):
         self.assertEqual(statuses[0]["visibility"], "both")
         self.assertIn("nenhum pagamento foi feito", sink.events[-1]["payload"]["message"]["text"])
 
+    def test_buy_an_option_from_an_earlier_suggestion(self):
+        """Bug: o chat mostra cards antigos, mas só a última sugestão podia ser comprada."""
+        runtime = PaidRuntime(reasoning={"interpreter": ORDER})
+        orch = build_orchestrator(runtime, InMemoryMemory(), RecordingSink(), customers=SQLiteCustomerMemory())
+        first = orch.handle_message(SessionContext("s1", "t", "cli", "demo", "quero pizza")).recommendations[0]
+        runtime.reasoning["interpreter"] = {**ORDER, "busca": "hambúrguer", "resumo": "hambúrguer"}
+        orch.handle_message(SessionContext("s1", "t", "cli", "demo", "agora quero hambúrguer"))
+        order = orch.simulate_purchase("s1", first["recommendation_id"], "old_card")
+        self.assertEqual(order["status"], "confirmed")
+        self.assertEqual(order["merchant"], first["merchant_name"])
+
     def test_without_sale_share_is_unknown_and_tenants_are_isolated(self):
         orch = build_orchestrator(PaidRuntime(reasoning={"interpreter": ORDER}), InMemoryMemory(), RecordingSink(),
                                   customers=SQLiteCustomerMemory())

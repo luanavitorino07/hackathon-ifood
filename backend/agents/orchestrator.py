@@ -38,6 +38,7 @@ ORCHESTRATOR_DEFINITION = AgentDefinition(
 
 
 PRESENTED_RECOMMENDATIONS = 3
+MAX_OFFERED = 30  # opções guardadas por atendimento para o botão Comprar
 
 
 def _brl(cents: int | None) -> str:
@@ -291,8 +292,9 @@ class Orchestrator:
         done = next((o for o in orders if o.get("client_action_id") == client_action_id), None)
         if done is not None:
             return done
-        proposals = [p for p in stored.get("proposals") or [] if isinstance(p, dict)]
-        rec = next((p for p in proposals if p.get("recommendation_id") == recommendation_id), None)
+        # o chat mantém os cards de sugestões anteriores: vale qualquer opção já mostrada neste atendimento
+        known = [p for p in (stored.get("offered") or []) + (stored.get("proposals") or []) if isinstance(p, dict)]
+        rec = next((p for p in known if p.get("recommendation_id") == recommendation_id), None)
         if rec is None:
             events.order_status(None, "failed", "Recomendação não encontrada neste atendimento")
             events.assistant_message("Não encontrei essa opção neste atendimento. Pode pedir de novo?")
@@ -320,6 +322,13 @@ class Orchestrator:
             "Isto é uma simulação: nenhum pedido foi enviado ao iFood e nenhum pagamento foi feito. "
             "Quer pedir mais alguma coisa?")
         return order
+
+    def _remember_offered(self, session_id: str, approved: list[dict[str, Any]]) -> None:
+        """Opções mostradas ao cliente neste atendimento (as mais recentes), para o botão Comprar."""
+        offered = [p for p in self._memory.load(session_id).state.get("offered") or [] if isinstance(p, dict)]
+        ids = {r["recommendation_id"] for r in approved}
+        offered = [p for p in offered if p.get("recommendation_id") not in ids] + approved
+        self._persist(session_id, ORCHESTRATOR_ID, {"offered": offered[-MAX_OFFERED:]})
 
     def usage_report(self, tenant_id: str) -> dict[str, Any]:
         """Custo de IA por cliente e vendas aceitas (Análise financeira do gestor)."""
@@ -708,6 +717,7 @@ class Orchestrator:
             events.assistant_message(text)
             return AgentsOutput("waiting_customer", text, [])
         best = approved[0]
+        self._remember_offered(session_id, approved)
         shown = best["total_cents"] if best["total_cents"] is not None else best["subtotal_cents"]
         schedule_id = self._save_schedule(self._current, state, best) if self._current is not None else None
         self._persist(session_id, ORCHESTRATOR_ID,
