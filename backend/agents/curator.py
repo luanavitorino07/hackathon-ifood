@@ -44,7 +44,7 @@ class Curator:
         answer = ask(ctx, "curator", SYSTEM, prompt, SCHEMA)
         if answer is None:
             return AgentResult("curator", "done", {"judged": 0},
-                               "IA indisponível: relevância decidida pelo filtro de palavras (reserva).", "low",
+                               "IA não respondeu (ver motivo no painel): relevância pelo filtro de palavras (reserva).", "low",
                                ["julgamento por IA indisponível"])
         known = {o.product_id for o in st.offers}
         st.ai_fit = {i["product_id"]: (i["fit"], i["reason"].strip()[:120])

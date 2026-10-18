@@ -52,6 +52,23 @@ class CuratorTest(unittest.TestCase):
         failed = [e["payload"] for e in events(sink, "tool_activity") if e["payload"]["tool_name"] == "raciocinio_ia"]
         self.assertTrue(failed and all(p["status"] == "failed" for p in failed))
 
+    def test_quota_reason_is_shown_to_manager(self):
+        runtime = FakeRuntime(offers=OFFERS)
+        runtime.reasoning = {}
+        orig = runtime.run
+        def run_with_quota(call):
+            if not call.allowed_tools:
+                from backend.agents.ports import RuntimeOutcome
+                runtime.reasoning_calls.append(call)
+                return RuntimeOutcome(ok=False, error="quota", retry_after_s=30)
+            return orig(call)
+        runtime.run = run_with_quota
+        sink = RecordingSink()
+        build_orchestrator(runtime, InMemoryMemory(), sink, customers=SQLiteCustomerMemory()).handle_message(
+            SessionContext("s1", "t", None, "demo", "quero pizza para 2 pessoas até R$ 200"))
+        notes = [e["payload"]["summary"] for e in events(sink, "tool_activity") if e["payload"]["tool_name"] == "raciocinio_ia"]
+        self.assertTrue(notes and all("cota da IA esgotada" in n for n in notes))
+
     def test_everything_rejected_means_ask_customer(self):
         reject = {"items": [{"product_id": p["product_id"], "fit": "nao", "reason": "não é pizza"} for p in OFFERS]}
         out, *_ = run(reasoning={"curator": reject})
