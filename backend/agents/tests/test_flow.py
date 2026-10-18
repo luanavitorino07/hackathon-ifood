@@ -167,7 +167,9 @@ class ConstraintsTest(unittest.TestCase):
         self.assertEqual([c.context.get("dietary_filters") for c in runtime.calls], [None, ["VEGETARIAN"]])
         names = [i["name"] for i in out.recommendations[0]["items"]]
         self.assertIn("Escondidinho de Mandioca e Legumes", names)
-        self.assertTrue(any("não comprovada" in w for w in out.recommendations[0]["warnings"]))
+        # a IA (simulada) avaliou a opção vegetariana: dieta por escolha não gera aviso, vira motivo
+        self.assertIn("vegetariana (para ao menos uma pessoa) (avaliada pela IA)", " ".join(out.recommendations[0]["reasons"]))
+        self.assertFalse(any("não comprovada" in w for w in out.recommendations[0]["warnings"]))
 
     def test_all_vegetarian_makes_a_single_filtered_search(self):
         runtime = FakeRuntime()
@@ -431,7 +433,8 @@ class RelevanceTest(unittest.TestCase):
     def test_closest_option_comes_with_warning(self):
         out, *_ = self.ask([TORTA, MARMITA_FRANGO])
         self.assertIn("Marmita - Frango", out.reply_text)
-        self.assertIn("Não encontrei exatamente o que você pediu (parmegiana)", out.reply_text)
+        self.assertTrue(out.recommendations)  # a mais próxima, sem o aviso "Não encontrei exatamente"
+        self.assertNotIn("Não encontrei exatamente", out.reply_text)
 
     def test_nothing_relevant_asks_customer_instead_of_suggesting(self):
         out, _, sink, *_ = self.ask([TORTA])

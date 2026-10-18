@@ -51,18 +51,24 @@ def _simulated_reasoning(call: RuntimeCall) -> RuntimeOutcome:
         terms = food_terms(text)
         return RuntimeOutcome(ok=True, tool_calls=trace, structured={
             "intencao": intent, "busca": " ".join(terms[:3]) or None, "pessoas": None, "orcamento_reais": None,
-            "restricoes": [], "preferencias": [], "resumo": f"{text} (IA simulada)", "resposta": None,
+            "restricoes": [], "preferencias": (_json_after("ESTADO", call.prompt) or {}).get("preferencias") or [],
+            "resumo": f"{text} (IA simulada)", "resposta": None,
             "conflito_com_perfil": None})
     if call.agent_id == "curator":
         terms = [slug(t) for t in _json_after("PRATO_JSON", call.prompt) or []]
         items = _json_after("ITENS_JSON", call.prompt) or []
+        wanted = [r.get("id") for r in _json_after("RESTRICOES_JSON", call.prompt) or [] if isinstance(r, dict)]
         judged = []
         for it in items:
             text = slug(f"{it.get('item', '')} {it.get('restaurante', '')}").replace("burger", "burger-hamburguer")
             fit = "sim" if not terms or all(t[:5] in text for t in terms) else (
                 "parcial" if any(t[:5] in text for t in terms) else "nao")
+            tags = next((set(i["tags"]) for i in DEMO_CATALOG if i["product_id"] == it.get("product_id")), set())
+            if "vegan" in tags:
+                tags.add("vegetarian")
             judged.append({"product_id": it.get("product_id", ""), "fit": fit,
-                           "reason": "corresponde ao pedido (simulado)" if fit == "sim" else "outro prato (simulado)"})
+                           "reason": "corresponde ao pedido (simulado)" if fit == "sim" else "outro prato (simulado)",
+                           "atende_restricoes": [r for r in wanted if r in tags]})
         return RuntimeOutcome(ok=True, structured={"items": judged}, tool_calls=trace)
     if call.agent_id == "sales_strategist":
         options = _json_after("OPCOES_JSON", call.prompt) or []

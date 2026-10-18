@@ -69,7 +69,8 @@ class InterpreterTest(unittest.TestCase):
         items = {i["name"]: i["quantity"] for i in out.recommendations[0]["items"]}
         self.assertEqual(sum(items.values()), 4)
         self.assertGreaterEqual(items.get("Poke de Tofu", 0), 1)  # ao menos um item vegano
-        self.assertTrue(any("vegana" in w and "avaliada pela IA" in w for w in out.recommendations[0]["warnings"]))
+        self.assertIn("vegana (para ao menos uma pessoa) (avaliada pela IA)", " ".join(out.recommendations[0]["reasons"]))
+        self.assertFalse(any("vegana" in w for w in out.recommendations[0]["warnings"]))  # dieta por escolha: sem aviso
         self.assertIn(("interpreter", "orchestrator"), talk(sink))
         self.assertIn("Produto desejado: poke.", rt.calls[0].prompt)
 
@@ -231,3 +232,100 @@ class PersonaTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExtrasTest(unittest.TestCase):
+    CATALOG = {
+        "hambúrguer": [offer("b1", "X-Burger", 2500, "Lanchonete A", "a"), offer("b2", "Cheeseburger", 2000, "Burger B", "b")],
+        "coca zero": [offer("c1", "Coca-Cola Zero Lata", 700, "Lanchonete A", "a"),
+                      offer("c9", "Coca-Cola Zero 2L", 1400, "Mercado", "m")],
+    }
+
+    CURATOR = {"items": [{"product_id": p, "fit": "sim", "reason": "ok"} for p in ("b1", "b2", "c1", "c9")]}
+
+    def runtime(self, **reading_kw):
+        return ByQueryRuntime(self.CATALOG, reasoning={
+            "interpreter": reading(busca="hambúrguer", complementos=["coca zero"], **reading_kw),
+            "curator": self.CURATOR})
+
+    def test_burger_with_coke_from_the_same_restaurant_comes_first(self):
+        rt = self.runtime()
+        _, sink, say = make(rt)
+        out = say("quero hambúrguer com coca zero")
+        first = out.recommendations[0]
+        self.assertEqual({i["name"] for i in first["items"]}, {"X-Burger", "Coca-Cola Zero Lata"})
+        self.assertIn("Inclui coca zero", first["reasons"])
+        other = next(r for r in out.recommendations if r["merchant_id"] == "b")
+        self.assertIn("Sem 'coca zero' neste restaurante na busca; peça à parte", other["warnings"])
+        self.assertEqual(len(rt.calls), 2)  # prato + complemento
+        self.assertNotIn("Mercado", [r["merchant_name"] for r in out.recommendations])
+
+    def test_and_the_coke_keeps_the_burger(self):
+        rt = ByQueryRuntime(self.CATALOG, reasoning={"interpreter": reading(busca="hambúrguer"),
+                                                     "curator": self.CURATOR})
+        _, _, say = make(rt)
+        say("quero hambúrguer")
+        rt.reasoning["interpreter"] = reading(intencao="ajuste", busca="hambúrguer", complementos=["coca zero"])
+        out = say("e a coca")
+        self.assertEqual({i["name"] for i in out.recommendations[0]["items"]}, {"X-Burger", "Coca-Cola Zero Lata"})
+
+
+class RestrictionsByAiTest(unittest.TestCase):
+    BURGERS = [offer("f", "Hambúrguer de falafel", 1190, "Veg", "v"), offer("s", "Smash Burger", 2500, "Veg", "v")]
+
+    def test_intolerance_accepts_items_ai_says_are_safe_with_short_warning(self):
+        cur = {"items": [{"product_id": "f", "fit": "sim", "reason": "x", "viola_restricoes": ["intolerância a grão de bico"]},
+                         {"product_id": "s", "fit": "sim", "reason": "x", "viola_restricoes": []}]}
+        rt = FakeRuntime(offers=self.BURGERS, reasoning={"curator": cur, "interpreter": reading(
+            busca="hambúrguer", restricoes=[{"tipo": "intolerância a grão de bico", "para_todos": True}])})
+        _, _, say = make(rt)
+        out = say("tenho intolerância a grão de bico, quero hambúrguer")
+        self.assertEqual([i["name"] for i in out.recommendations[0]["items"]], ["Smash Burger"])
+        self.assertTrue(any("avaliada pela IA: confirme" in w for w in out.recommendations[0]["warnings"]))
+
+    def test_vegan_judged_by_ai_has_no_unverified_warning(self):
+        cur = {"items": [{"product_id": "f", "fit": "sim", "reason": "x", "atende_restricoes": ["vegan"]},
+                         {"product_id": "s", "fit": "sim", "reason": "x", "atende_restricoes": []}]}
+        rt = FakeRuntime(offers=self.BURGERS, reasoning={"curator": cur, "interpreter": reading(
+            busca="hambúrguer", restricoes=[{"tipo": "vegano", "para_todos": True}])})
+        _, _, say = make(rt)
+        out = say("sou vegano, quero hambúrguer")
+        rec = out.recommendations[0]
+        self.assertEqual([i["name"] for i in rec["items"]], ["Hambúrguer de falafel"])
+        self.assertFalse(any("não comprovada" in w or "Não encontrei exatamente" in w for w in rec["warnings"]))
+        self.assertNotIn("Orçamento não informado", rec["warnings"])
+
+    def test_no_profile_conflict_without_registered_restrictions(self):
+        rt = FakeRuntime(offers=self.BURGERS, reasoning={"interpreter": reading(
+            busca="hambúrguer", conflito_com_perfil="sugestão anterior tinha grão de bico")})
+        _, sink, say = make(rt)
+        say("quero hambúrguer")
+        self.assertEqual(kinds(sink, "conflict_detected"), [])
+
+
+class CorrectionsTest(unittest.TestCase):
+    def test_customer_can_retract_a_restriction_explicitly(self):
+        burgers = [offer("v", "Burger Vegano", 3000, "A", "a"), offer("c", "X-Bacon", 2500, "A", "a")]
+        cur = {"items": [{"product_id": "v", "fit": "sim", "reason": "x", "atende_restricoes": ["vegan"]},
+                         {"product_id": "c", "fit": "sim", "reason": "x"}]}
+        rt = FakeRuntime(offers=burgers, reasoning={"curator": cur, "interpreter": reading(
+            busca="hambúrguer", restricoes=[{"tipo": "vegano", "para_todos": True}])})
+        _, sink, say = make(rt)
+        self.assertEqual(say("sou vegano, quero hambúrguer").recommendations[0]["items"][0]["name"], "Burger Vegano")
+        rt.reasoning["interpreter"] = reading(intencao="ajuste", busca="hambúrguer", remover_restricoes=["vegano"])
+        out = say("não sou vegano não, errei")
+        self.assertEqual(out.recommendations[0]["items"][0]["name"], "X-Bacon")
+        self.assertTrue(any("removida a pedido do cliente: vegana" in e["payload"]["summary"]
+                            for e in kinds(sink, "memory_changed")))
+
+    def test_combo_that_includes_the_drink_needs_no_extra(self):
+        catalog = {"hambúrguer": [offer("x", "X-Burger", 2000, "A", "a"), offer("k", "Combo X-Burger + Coca", 2900, "A", "a")],
+                   "coca": [offer("z", "Coca-Cola Lata", 600, "B", "b")]}
+        cur = {"items": [{"product_id": "x", "fit": "sim", "reason": "x"},
+                         {"product_id": "k", "fit": "sim", "reason": "combo", "inclui": ["coca"]},
+                         {"product_id": "z", "fit": "sim", "reason": "coca"}]}
+        rt = ByQueryRuntime(catalog, reasoning={"curator": cur, "interpreter": reading(busca="hambúrguer", complementos=["coca"])})
+        _, _, say = make(rt)
+        rec = say("hambúrguer com coca").recommendations[0]
+        self.assertEqual([i["name"] for i in rec["items"]], ["Combo X-Burger + Coca"])
+        self.assertIn("Inclui coca", rec["reasons"])

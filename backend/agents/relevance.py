@@ -40,9 +40,16 @@ _MODIFICATION = re.compile(r"\b(?:sem|extra|adicional|adicionais|retirar|tirar|a
 _PREFIX = 5  # "marmita" casa com "marmitaria"; "pizza" com "pizzaria"
 
 
+# grafias equivalentes comuns em cardápios (reserva por palavras; com IA, o Curador julga)
+_SYNONYMS = {"burger": "hamburguer", "burguer": "hamburguer", "hamburger": "hamburguer", "refri": "refrigerante",
+             "coke": "coca", "sushis": "sushi", "pizzas": "pizza"}
+
+
 def _words(text: str) -> list[str]:
     plain = unicodedata.normalize("NFKD", text.lower()).encode("ascii", "ignore").decode()
-    return re.findall(r"[a-z]+", plain)
+    words = re.findall(r"[a-z]+", plain)
+    # "Cheeseburger"/"X-Burger": também conta como hambúrguer
+    return words + [syn for w in words for key, syn in _SYNONYMS.items() if w.endswith(key) and w != syn]
 
 
 def food_terms(text: str) -> tuple[str, ...]:

@@ -62,12 +62,15 @@ class Orchestrator:
         stored = self._memory.load(session.session_id).state
         self._resolve_open_conflicts(session, stored, events)
         base, constraints, in_order, shown, stored_terms = self._build_constraints(session)
+        search = stored.get("search") if isinstance(stored.get("search"), dict) else {}
+        stored_extras = tuple(x for x in search.get("extras") or [] if isinstance(x, str))
         profile = self._profile(session)
         base, constraints = self._apply_profile(stored, base, constraints, profile, events)
         state = WorkingState(constraints=constraints, customer_profile=profile)
-        reading = self._interpret(session, state, base, stored_terms, in_order, shown, events)
+        reading = self._interpret(session, state, base, stored_terms, in_order, shown, events, stored_extras)
         constraints = state.constraints = reading.constraints
         state.query_terms, state.request_summary = reading.terms, reading.summary
+        state.extra_terms = reading.extras
         shown_total = shown.get("total_cents") if shown else None
         if wants_cheaper(session.message_text) and isinstance(shown_total, int):
             state.price_ceiling_cents = shown_total
@@ -82,21 +85,25 @@ class Orchestrator:
                 intent = "chat" if not state.query_terms else "order"
         if intent == "confirm" and shown:
             return self._confirm(session, events, constraints, shown)
-        if reading.profile_conflict:
+        if reading.profile_conflict and profile is not None and profile.declared_restrictions:
             constraints = state.constraints = self._profile_conflict(reading.profile_conflict, constraints,
                                                                      profile, events)
         if intent != "order":  # papo: responde direto, sem a esteira de busca
             return self._chat_only(session, events, constraints, reading, profile)
         self._persist(session.session_id, ORCHESTRATOR_ID,
                       {"constraints": constraints.to_dict(), "conversation": {"stage": "ordering"},
-                       "search": {"terms": list(state.query_terms), "summary": state.request_summary}})
+                       "search": {"terms": list(state.query_terms), "summary": state.request_summary,
+                                  "extras": list(state.extra_terms)}})
         events.agent_status(ORCHESTRATOR_ID, "running", None, "Planejando atendimento")
-        current_signature = signature(session, constraints, state.query_terms)
+        current_signature = {**signature(session, constraints, state.query_terms),
+                             "extras": sorted(state.extra_terms)}
         # o julgamento do Curador depende também das preferências ("acha um já montado")
         curation_signature = {**current_signature, "preferences": sorted(constraints.preferences)}
         reuse = reusable_offers(self._memory.load(session.session_id).state, session, current_signature)
         if reuse is not None:  # só mudou quantidade/orçamento: replaneja sem nova busca
             state.offers, state.data_origin, why = reuse  # type: ignore[assignment]
+            saved_search = self._memory.load(session.session_id).state.get("last_search") or {}
+            state.extra_of = {k: v for k, v in (saved_search.get("extra_of") or {}).items() if isinstance(v, str)}
             curation = self._memory.load(session.session_id).state.get("curation")
             if isinstance(curation, dict) and curation.get("signature") == curation_signature:
                 state.ai_fit = {k: (v[0], v[1]) for k, v in (curation.get("fit") or {}).items()
@@ -140,7 +147,7 @@ class Orchestrator:
                     ran -= {"researcher", "curator"}
                     continue
                 if retry is not None and not retry.get("closed"):
-                    good = sum(1 for fit, _ in state.ai_fit.values() if fit == "sim")
+                    good = sum(1 for pid, (fit, _) in state.ai_fit.items() if fit == "sim" and pid not in state.extra_of)
                     if not good:  # a nova busca também não serviu: fica a melhor das duas
                         self._restore(state, retry)
                     self._close_retry(events, retry, f"Nova busca '{retry['hint']}': {good} opção(ões) atendem"
@@ -149,7 +156,8 @@ class Orchestrator:
                     retry["closed"] = True
             if aid == "researcher" and result.status == "done" and state.offers:
                 self._persist(session.session_id, ORCHESTRATOR_ID, {"last_search": {
-                    "signature": current_signature, "at": time.time(), "count": len(state.offers)}})
+                    "signature": current_signature, "at": time.time(), "count": len(state.offers),
+                    "extra_of": dict(state.extra_of)}})
             missing += result.missing_data
             limitations += result.limitations
             if result.status == "error":
@@ -162,7 +170,7 @@ class Orchestrator:
     # ---- entendimento, cadastro e conflitos ------------------------------------------
     def _interpret(self, session: SessionContext, state: WorkingState, base: Constraints,
                    stored_terms: tuple[str, ...], in_order: bool, shown: dict[str, Any] | None,
-                   events: EventEmitter) -> Reading:
+                   events: EventEmitter, stored_extras: tuple[str, ...] = ()) -> Reading:
         task = new_id("task")
         events.agent_message(ORCHESTRATOR_ID, INTERPRETER_ID, task, "request", "Entender a mensagem do cliente")
         events.agent_status(INTERPRETER_ID, "running", task, INTERPRETER_DEFINITION.role)
@@ -177,9 +185,13 @@ class Orchestrator:
         if shown:
             items = ", ".join(shown.get("items") or [])
             last = f"{shown.get('merchant') or ''}: {items}".strip(": ") or None
-        reading = interpret(ctx, base, state.constraints, stored_terms, in_order, last, facts)
+        reading = interpret(ctx, base, state.constraints, stored_terms, in_order, last, facts, stored_extras)
         events.agent_status(INTERPRETER_ID, "done", task, "Mensagem entendida")
         events.agent_message(INTERPRETER_ID, ORCHESTRATOR_ID, task, "proposal", describe(reading))
+        removed = [r for r in state.constraints.dietary if r not in reading.constraints.dietary]
+        if removed:
+            events.memory_changed("session", ["constraints"], "Restrição removida a pedido do cliente: "
+                                  + ", ".join(restriction_label(r) for r in removed))
         added = [r for r in reading.constraints.dietary if r not in state.constraints.dietary]
         if added:
             events.memory_changed("session", ["constraints"],
@@ -377,8 +389,7 @@ class Orchestrator:
             elif not state.offers:
                 reason, ask = "Não encontrei ofertas disponíveis.", "Pode ajustar o pedido?"
             elif state.relevance_miss:
-                wanted = (state.request_summary or f"\"{' '.join(state.query_terms)}\"" if state.query_terms
-                          else "o que você pediu")
+                wanted = f"\"{' '.join(state.query_terms)}\"" if state.query_terms else "o que você pediu"
                 reason = f"Não encontrei {wanted} disponível agora perto de você."
                 ask = "Quer tentar outro prato ou descrever de outro jeito?"
             elif state.price_ceiling_cents is not None:
